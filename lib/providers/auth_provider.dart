@@ -1,52 +1,293 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../services/firebase_service.dart';
+import '../services/preferences_service.dart';
 
+/// Authentication provider with Firebase Auth integration.
+/// Falls back to local/offline mode when Firebase is not configured.
 class AuthProvider with ChangeNotifier {
   bool _isAuthenticated = false;
+  bool _isLoading = false;
   String? _userName;
   String? _userEmail;
+  String? _userId;
+  String? _errorMessage;
   
   bool get isAuthenticated => _isAuthenticated;
+  bool get isLoading => _isLoading;
   String? get userName => _userName;
   String? get userEmail => _userEmail;
+  String? get userId => _userId;
+  String? get errorMessage => _errorMessage;
   
-  // Mock login function (Phase 1)
+  AuthProvider() {
+    _checkAuthState();
+  }
+  
+  /// Check if user is already authenticated (on app start)
+  Future<void> _checkAuthState() async {
+    if (FirebaseService.isOfflineMode) {
+      // Check SharedPreferences for offline login state
+      _isAuthenticated = PreferencesService.isLoggedIn;
+      if (_isAuthenticated) {
+        _userEmail = PreferencesService.userEmail;
+        _userName = PreferencesService.userName;
+        _userId = 'offline_user';
+      }
+    } else {
+      // Check Firebase Auth state
+      final user = FirebaseService.auth?.currentUser;
+      if (user != null) {
+        _isAuthenticated = true;
+        _userEmail = user.email;
+        _userName = user.displayName ?? user.email?.split('@')[0];
+        _userId = user.uid;
+      }
+    }
+    notifyListeners();
+  }
+  
+  /// Login with email and password
   Future<bool> login(String email, String password) async {
-    // Simulate network delay
-    await Future.delayed(const Duration(seconds: 2));
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
     
-    // Mock authentication - In Phase 2, integrate with Firebase
+    try {
+      if (FirebaseService.isOfflineMode) {
+        // Offline mode: Validate locally
+        return await _loginOffline(email, password);
+      } else {
+        // Firebase mode: Use Firebase Auth
+        return await _loginWithFirebase(email, password);
+      }
+    } catch (e) {
+      _errorMessage = e.toString();
+      _isLoading = false;
+      notifyListeners();
+      return false;
+    }
+  }
+  
+  /// Login using Firebase Authentication
+  Future<bool> _loginWithFirebase(String email, String password) async {
+    try {
+      final credential = await FirebaseService.auth!.signInWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+      
+      final user = credential.user;
+      if (user != null) {
+        _isAuthenticated = true;
+        _userEmail = user.email;
+        _userName = user.displayName ?? user.email?.split('@')[0];
+        _userId = user.uid;
+        _isLoading = false;
+        notifyListeners();
+        return true;
+      }
+      
+      _errorMessage = 'Login failed. Please try again.';
+      _isLoading = false;
+      notifyListeners();
+      return false;
+    } on FirebaseAuthException catch (e) {
+      _errorMessage = _getAuthErrorMessage(e.code);
+      _isLoading = false;
+      notifyListeners();
+      return false;
+    }
+  }
+  
+  /// Offline login (for development/demo mode)
+  Future<bool> _loginOffline(String email, String password) async {
+    // Simulate network delay
+    await Future.delayed(const Duration(seconds: 1));
+    
+    // Basic validation for offline mode
     if (email.isNotEmpty && password.length >= 6) {
       _isAuthenticated = true;
       _userEmail = email;
       _userName = email.split('@')[0];
+      _userId = 'offline_user';
+      
+      // Save to preferences
+      PreferencesService.isLoggedIn = true;
+      PreferencesService.userEmail = email;
+      PreferencesService.userName = _userName;
+      
+      _isLoading = false;
       notifyListeners();
       return true;
     }
+    
+    _errorMessage = 'Invalid email or password';
+    _isLoading = false;
+    notifyListeners();
     return false;
   }
   
-  // Mock register function (Phase 1)
+  /// Register new user with email and password
   Future<bool> register(String name, String email, String password) async {
-    // Simulate network delay
-    await Future.delayed(const Duration(seconds: 2));
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
     
-    // Mock registration
+    try {
+      if (FirebaseService.isOfflineMode) {
+        return await _registerOffline(name, email, password);
+      } else {
+        return await _registerWithFirebase(name, email, password);
+      }
+    } catch (e) {
+      _errorMessage = e.toString();
+      _isLoading = false;
+      notifyListeners();
+      return false;
+    }
+  }
+  
+  /// Register using Firebase Authentication
+  Future<bool> _registerWithFirebase(String name, String email, String password) async {
+    try {
+      final credential = await FirebaseService.auth!.createUserWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+      
+      final user = credential.user;
+      if (user != null) {
+        // Update display name
+        await user.updateDisplayName(name);
+        
+        _isAuthenticated = true;
+        _userEmail = user.email;
+        _userName = name;
+        _userId = user.uid;
+        _isLoading = false;
+        notifyListeners();
+        return true;
+      }
+      
+      _errorMessage = 'Registration failed. Please try again.';
+      _isLoading = false;
+      notifyListeners();
+      return false;
+    } on FirebaseAuthException catch (e) {
+      _errorMessage = _getAuthErrorMessage(e.code);
+      _isLoading = false;
+      notifyListeners();
+      return false;
+    }
+  }
+  
+  /// Offline registration (for development/demo mode)
+  Future<bool> _registerOffline(String name, String email, String password) async {
+    await Future.delayed(const Duration(seconds: 1));
+    
     if (name.isNotEmpty && email.isNotEmpty && password.length >= 6) {
       _isAuthenticated = true;
       _userName = name;
       _userEmail = email;
+      _userId = 'offline_user';
+      
+      // Save to preferences
+      PreferencesService.isLoggedIn = true;
+      PreferencesService.userEmail = email;
+      PreferencesService.userName = name;
+      
+      _isLoading = false;
       notifyListeners();
       return true;
     }
+    
+    _errorMessage = 'Please fill in all fields correctly';
+    _isLoading = false;
+    notifyListeners();
     return false;
   }
   
-  // Logout function
-  Future<void> logout() async {
-    _isAuthenticated = false;
-    _userName = null;
-    _userEmail = null;
+  /// Send password reset email
+  Future<bool> resetPassword(String email) async {
+    _isLoading = true;
+    _errorMessage = null;
     notifyListeners();
+    
+    try {
+      if (FirebaseService.isOfflineMode) {
+        await Future.delayed(const Duration(seconds: 1));
+        _isLoading = false;
+        notifyListeners();
+        return true; // Simulate success in offline mode
+      }
+      
+      await FirebaseService.auth!.sendPasswordResetEmail(email: email);
+      _isLoading = false;
+      notifyListeners();
+      return true;
+    } on FirebaseAuthException catch (e) {
+      _errorMessage = _getAuthErrorMessage(e.code);
+      _isLoading = false;
+      notifyListeners();
+      return false;
+    } catch (e) {
+      _errorMessage = e.toString();
+      _isLoading = false;
+      notifyListeners();
+      return false;
+    }
+  }
+  
+  /// Logout the current user
+  Future<void> logout() async {
+    _isLoading = true;
+    notifyListeners();
+    
+    try {
+      if (!FirebaseService.isOfflineMode) {
+        await FirebaseService.auth?.signOut();
+      }
+      
+      // Clear local state
+      await PreferencesService.clearUserData();
+      
+      _isAuthenticated = false;
+      _userName = null;
+      _userEmail = null;
+      _userId = null;
+      _isLoading = false;
+      notifyListeners();
+    } catch (e) {
+      _errorMessage = e.toString();
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+  
+  /// Get user-friendly error message from Firebase error code
+  String _getAuthErrorMessage(String code) {
+    switch (code) {
+      case 'user-not-found':
+        return 'No account found with this email.';
+      case 'wrong-password':
+        return 'Incorrect password.';
+      case 'invalid-email':
+        return 'Please enter a valid email address.';
+      case 'user-disabled':
+        return 'This account has been disabled.';
+      case 'email-already-in-use':
+        return 'An account already exists with this email.';
+      case 'weak-password':
+        return 'Password is too weak. Use at least 6 characters.';
+      case 'operation-not-allowed':
+        return 'Email/password sign in is not enabled.';
+      case 'too-many-requests':
+        return 'Too many attempts. Please try again later.';
+      case 'invalid-credential':
+        return 'Invalid email or password.';
+      default:
+        return 'Authentication error: $code';
+    }
   }
 }
-

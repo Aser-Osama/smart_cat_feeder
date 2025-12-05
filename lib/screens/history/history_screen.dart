@@ -15,61 +15,77 @@ class HistoryScreen extends StatelessWidget {
         title: const Text('Feeding History'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.filter_list),
+            icon: const Icon(Icons.refresh),
             onPressed: () {
-              // TODO: Implement filter
+              Provider.of<FeederProvider>(context, listen: false).refreshData();
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Refreshing data...'),
+                  duration: Duration(seconds: 1),
+                ),
+              );
             },
+          ),
+          IconButton(
+            icon: const Icon(Icons.filter_list),
+            onPressed: () => _showFilterDialog(context),
           ),
         ],
       ),
       body: Consumer<FeederProvider>(
         builder: (context, feederProvider, child) {
+          if (feederProvider.isLoading) {
+            return const Center(
+              child: CircularProgressIndicator(),
+            );
+          }
+          
           final logs = feederProvider.feedingHistory;
           
           if (logs.isEmpty) {
             return _buildEmptyState(context);
           }
           
-          return Column(
-            children: [
-              // Stats Summary
-              _buildStatsSummary(context, feederProvider),
-              
-              // History List
-              Expanded(
-                child: ListView.builder(
-                  padding: const EdgeInsets.all(20),
-                  itemCount: logs.length,
-                  itemBuilder: (context, index) {
-                    final log = logs[index];
-                    final isToday = _isToday(log.timestamp);
-                    final showDate = index == 0 || 
-                        !_isSameDay(log.timestamp, logs[index - 1].timestamp);
-                    
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (showDate) ...[
-                          Padding(
-                            padding: EdgeInsets.only(bottom: 12, top: index == 0 ? 0 : 20),
-                            child: Text(
-                              isToday 
-                                  ? 'Today' 
-                                  : DateFormat('EEEE, MMMM dd, yyyy').format(log.timestamp),
-                              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                                fontWeight: FontWeight.bold,
+          return RefreshIndicator(
+            onRefresh: () => feederProvider.refreshData(),
+            child: Column(
+              children: [
+                // Stats Summary
+                _buildStatsSummary(context, feederProvider),
+                
+                // History List
+                Expanded(
+                  child: ListView.builder(
+                    padding: const EdgeInsets.all(20),
+                    itemCount: logs.length,
+                    itemBuilder: (context, index) {
+                      final log = logs[index];
+                      final showDate = index == 0 || 
+                          !_isSameDay(log.timestamp, logs[index - 1].timestamp);
+                      
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (showDate) ...[
+                            Padding(
+                              padding: EdgeInsets.only(bottom: 12, top: index == 0 ? 0 : 20),
+                              child: Text(
+                                _formatDateHeader(log.timestamp),
+                                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
                             ),
-                          ),
+                          ],
+                          _buildHistoryCard(context, log),
+                          const SizedBox(height: 12),
                         ],
-                        _buildHistoryCard(context, log),
-                        const SizedBox(height: 12),
-                      ],
-                    );
-                  },
+                      );
+                    },
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           );
         },
       ),
@@ -78,14 +94,8 @@ class HistoryScreen extends StatelessWidget {
 
   Widget _buildStatsSummary(BuildContext context, FeederProvider provider) {
     final todayCount = provider.getTodayFeedingCount();
-    final weekCount = provider.feedingHistory.where((log) {
-      final difference = DateTime.now().difference(log.timestamp).inDays;
-      return difference < 7;
-    }).length;
-    
-    final totalAmount = provider.feedingHistory.fold<double>(
-      0, (sum, log) => sum + log.amount,
-    );
+    final weekCount = provider.getWeekFeedingCount();
+    final totalAmount = provider.getTotalAmountDispensed();
     
     return Container(
       margin: const EdgeInsets.all(20),
@@ -148,7 +158,7 @@ class HistoryScreen extends StatelessWidget {
   }
 
   Widget _buildHistoryCard(BuildContext context, FeedingLog log) {
-    final isManual = log.type.toString().contains('manual');
+    final isManual = log.type == FeedingType.manual;
     
     return Container(
       padding: const EdgeInsets.all(16),
@@ -188,13 +198,14 @@ class HistoryScreen extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    Text(
-                      isManual ? 'Manual Feeding' : 'Scheduled Feeding',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
+                    Expanded(
+                      child: Text(
+                        log.typeDisplayName,
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
-                    const SizedBox(width: 8),
                     if (log.success)
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -210,13 +221,50 @@ class HistoryScreen extends StatelessWidget {
                             fontSize: 10,
                           ),
                         ),
+                      )
+                    else
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: AppTheme.errorColor.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          'Failed',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: AppTheme.errorColor,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 10,
+                          ),
+                        ),
                       ),
                   ],
                 ),
                 const SizedBox(height: 4),
-                Text(
-                  DateFormat('hh:mm a').format(log.timestamp),
-                  style: Theme.of(context).textTheme.bodyMedium,
+                Row(
+                  children: [
+                    Text(
+                      DateFormat('hh:mm a').format(log.timestamp),
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                    if (log.scheduleName != null) ...[
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: AppTheme.primaryColor.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          log.scheduleName!,
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: AppTheme.primaryColor,
+                            fontSize: 10,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ],
             ),
@@ -280,9 +328,19 @@ class HistoryScreen extends StatelessWidget {
     );
   }
 
-  bool _isToday(DateTime date) {
+  String _formatDateHeader(DateTime date) {
     final now = DateTime.now();
-    return date.year == now.year && date.month == now.month && date.day == now.day;
+    final today = DateTime(now.year, now.month, now.day);
+    final yesterday = today.subtract(const Duration(days: 1));
+    final dateOnly = DateTime(date.year, date.month, date.day);
+    
+    if (dateOnly == today) {
+      return 'Today';
+    } else if (dateOnly == yesterday) {
+      return 'Yesterday';
+    } else {
+      return DateFormat('EEEE, MMMM dd, yyyy').format(date);
+    }
   }
 
   bool _isSameDay(DateTime date1, DateTime date2) {
@@ -290,5 +348,55 @@ class HistoryScreen extends StatelessWidget {
            date1.month == date2.month && 
            date1.day == date2.day;
   }
-}
 
+  void _showFilterDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Filter History'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.all_inclusive),
+              title: const Text('All Feedings'),
+              onTap: () => Navigator.pop(context),
+            ),
+            ListTile(
+              leading: const Icon(Icons.touch_app),
+              title: const Text('Manual Only'),
+              onTap: () {
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Filter: Manual feedings'),
+                    backgroundColor: AppTheme.secondaryColor,
+                  ),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.schedule),
+              title: const Text('Scheduled Only'),
+              onTap: () {
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Filter: Scheduled feedings'),
+                    backgroundColor: AppTheme.primaryColor,
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+}

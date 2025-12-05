@@ -5,15 +5,23 @@ import 'config/theme.dart';
 import 'providers/auth_provider.dart';
 import 'providers/feeder_provider.dart';
 import 'screens/splash_screen.dart';
+import 'services/firebase_service.dart';
+import 'services/preferences_service.dart';
+import 'services/notification_service.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
   // Set preferred orientations
-  SystemChrome.setPreferredOrientations([
+  await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
   ]);
+  
+  // Initialize services (Phase 2)
+  await PreferencesService.initialize();
+  await FirebaseService.initialize();
+  await NotificationService.initialize();
   
   runApp(const MyApp());
 }
@@ -37,4 +45,3 @@ class MyApp extends StatelessWidget {
     );
   }
 }
-
