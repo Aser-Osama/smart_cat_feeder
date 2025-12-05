@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 import '../../config/theme.dart';
 import '../../services/preferences_service.dart';
 import '../../widgets/custom_button.dart';
@@ -79,36 +80,35 @@ class _CameraScreenState extends State<CameraScreen> {
   @override
   void initState() {
     super.initState();
-    _checkEmulator();
+    _initializeAsync();
+  }
+
+  Future<void> _initializeAsync() async {
+    await _checkEmulator();
     _initializePlayer();
   }
 
   Future<void> _checkEmulator() async {
-    // Check if running on emulator
+    // Check if running on emulator using device_info_plus
     if (Platform.isAndroid) {
       try {
-        // Check common emulator indicators
-        final bool isPhysicalDevice = !kDebugMode || 
-            await _isPhysicalAndroidDevice();
-        setState(() {
-          _isEmulator = !isPhysicalDevice;
-        });
+        final deviceInfo = DeviceInfoPlugin();
+        final androidInfo = await deviceInfo.androidInfo;
+        final isPhysical = androidInfo.isPhysicalDevice;
+        debugPrint('Android device - isPhysicalDevice: $isPhysical');
+        debugPrint('Android device - brand: ${androidInfo.brand}, model: ${androidInfo.model}');
+        if (mounted) {
+          setState(() {
+            _isEmulator = !isPhysical;
+          });
+        }
       } catch (e) {
+        debugPrint('Failed to check emulator status: $e');
         // Assume physical device if check fails
-        setState(() => _isEmulator = false);
+        if (mounted) {
+          setState(() => _isEmulator = false);
+        }
       }
-    }
-  }
-
-  Future<bool> _isPhysicalAndroidDevice() async {
-    // In debug mode on Android, we can check some properties
-    // This is a simple heuristic - emulators often have specific fingerprints
-    try {
-      // Check if hardware is generic (common in emulators)
-      // This isn't foolproof but catches most emulators
-      return true; // Default to true, let media_kit handle detection
-    } catch (e) {
-      return true;
     }
   }
 
@@ -122,12 +122,19 @@ class _CameraScreenState extends State<CameraScreen> {
       );
       
       // Create video controller
+      // Disable hardware acceleration on emulators - they don't support GPU video decoding properly
+      // which causes black screen issues. Software rendering works reliably.
       _videoController = VideoController(
         _player!,
-        configuration: const VideoControllerConfiguration(
-          enableHardwareAcceleration: true,
+        configuration: VideoControllerConfiguration(
+          // Disable HW acceleration on emulators for software rendering fallback
+          enableHardwareAcceleration: !_isEmulator,
+          // Use software-based Android Surface Type for emulators
+          androidAttachSurfaceAfterVideoParameters: _isEmulator,
         ),
       );
+      
+      debugPrint('VideoController initialized - HW accel: ${!_isEmulator}, isEmulator: $_isEmulator');
       
       // Listen to player state
       _player!.stream.playing.listen((playing) {
@@ -153,13 +160,17 @@ class _CameraScreenState extends State<CameraScreen> {
         }
       });
 
-      setState(() => _playerInitialized = true);
+      if (mounted) {
+        setState(() => _playerInitialized = true);
+      }
     } catch (e) {
       debugPrint('Failed to initialize player: $e');
-      setState(() {
-        _playerInitialized = false;
-        _errorMessage = 'Video player initialization failed: $e';
-      });
+      if (mounted) {
+        setState(() {
+          _playerInitialized = false;
+          _errorMessage = 'Video player initialization failed: $e';
+        });
+      }
     }
   }
 
@@ -357,12 +368,14 @@ class _CameraScreenState extends State<CameraScreen> {
       return Stack(
         children: [
           // Video player from media_kit
+          // On emulators, use software rendering with lower quality for performance
           Video(
             controller: _videoController!,
             controls: NoVideoControls,
             fill: Colors.black,
             wakelock: false,
-            filterQuality: FilterQuality.low,
+            // Lower filter quality on emulators for better software rendering performance
+            filterQuality: _isEmulator ? FilterQuality.none : FilterQuality.low,
           ),
           
           // Loading overlay
@@ -773,7 +786,12 @@ class _CameraScreenState extends State<CameraScreen> {
                 : null,
           ),
           const Divider(height: 20),
-          _buildStatRow(Icons.memory, 'Engine', 'libmpv (media_kit)'),
+          _buildStatRow(
+            Icons.memory, 
+            'Engine', 
+            _isEmulator ? 'libmpv (SW render)' : 'libmpv (media_kit)',
+            valueColor: _isEmulator ? Colors.orange : null,
+          ),
           const Divider(height: 20),
           _buildStatRow(
             Icons.signal_cellular_alt,
