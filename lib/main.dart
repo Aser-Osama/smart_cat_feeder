@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:media_kit/media_kit.dart';
 import 'config/theme.dart';
 import 'providers/auth_provider.dart';
 import 'providers/feeder_provider.dart';
@@ -11,6 +12,9 @@ import 'services/notification_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // Initialize MediaKit for video playback
+  MediaKit.ensureInitialized();
   
   // Set preferred orientations
   await SystemChrome.setPreferredOrientations([

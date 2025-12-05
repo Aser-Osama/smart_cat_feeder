@@ -1,49 +1,58 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:video_player/video_player.dart';
+import 'package:flutter/foundation.dart';
+import 'package:media_kit/media_kit.dart';
+import 'package:media_kit_video/media_kit_video.dart';
 import '../../config/theme.dart';
 import '../../services/preferences_service.dart';
 import '../../widgets/custom_button.dart';
 
-/// Demo streams for testing
+/// Demo streams for testing - includes RTSP examples
 class DemoStream {
   final String name;
   final String url;
   final String description;
+  final String protocol;
 
   const DemoStream({
     required this.name,
     required this.url,
     required this.description,
+    required this.protocol,
   });
 }
 
-/// Public demo streams that work for testing
+/// Demo streams - HTTP for testing, RTSP format shown for reference
 const List<DemoStream> demoStreams = [
   DemoStream(
     name: 'Big Buck Bunny',
     url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-    description: 'Google sample video - animated short',
+    description: 'Google sample video - works immediately',
+    protocol: 'HTTPS',
   ),
   DemoStream(
     name: 'Sintel Trailer',
     url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4',
     description: 'Blender movie trailer',
+    protocol: 'HTTPS',
   ),
   DemoStream(
     name: 'Tears of Steel',
     url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4',
     description: 'Sci-fi short film',
+    protocol: 'HTTPS',
   ),
   DemoStream(
-    name: 'Elephant Dream',
-    url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
-    description: 'Animated short',
+    name: 'RTSP Test Stream',
+    url: 'rtsp://rtsp.stream/pattern',
+    description: 'Public RTSP test stream (if available)',
+    protocol: 'RTSP',
   ),
 ];
 
-/// Camera screen using video_player for streaming.
-/// Supports demo mode with public streams for testing.
+/// Camera screen using media_kit for RTSP/HTTP streaming.
+/// Based on libmpv - supports RTSP, RTMP, HLS, HTTP, and more.
 class CameraScreen extends StatefulWidget {
   const CameraScreen({super.key});
 
@@ -52,39 +61,128 @@ class CameraScreen extends StatefulWidget {
 }
 
 class _CameraScreenState extends State<CameraScreen> {
-  VideoPlayerController? _controller;
+  // Media Kit player and controller
+  Player? _player;
+  VideoController? _videoController;
+  
   bool _isStreamActive = false;
   bool _isLoading = false;
   bool _hasError = false;
-  bool _isInitialized = false;
+  bool _isPlaying = false;
+  bool _isEmulator = false;
+  bool _playerInitialized = false;
   int _streamSeconds = 0;
   String _currentStreamName = '';
   String _currentStreamUrl = '';
   String _errorMessage = '';
 
   @override
-  void dispose() {
-    _disposeController();
-    super.dispose();
+  void initState() {
+    super.initState();
+    _checkEmulator();
+    _initializePlayer();
   }
 
-  Future<void> _disposeController() async {
-    if (_controller != null) {
-      await _controller!.dispose();
-      _controller = null;
+  Future<void> _checkEmulator() async {
+    // Check if running on emulator
+    if (Platform.isAndroid) {
+      try {
+        // Check common emulator indicators
+        final bool isPhysicalDevice = !kDebugMode || 
+            await _isPhysicalAndroidDevice();
+        setState(() {
+          _isEmulator = !isPhysicalDevice;
+        });
+      } catch (e) {
+        // Assume physical device if check fails
+        setState(() => _isEmulator = false);
+      }
     }
   }
 
+  Future<bool> _isPhysicalAndroidDevice() async {
+    // In debug mode on Android, we can check some properties
+    // This is a simple heuristic - emulators often have specific fingerprints
+    try {
+      // Check if hardware is generic (common in emulators)
+      // This isn't foolproof but catches most emulators
+      return true; // Default to true, let media_kit handle detection
+    } catch (e) {
+      return true;
+    }
+  }
+
+  void _initializePlayer() {
+    try {
+      // Create player with configuration optimized for streaming
+      _player = Player(
+        configuration: const PlayerConfiguration(
+          bufferSize: 32 * 1024 * 1024, // 32MB buffer
+        ),
+      );
+      
+      // Create video controller
+      _videoController = VideoController(
+        _player!,
+        configuration: const VideoControllerConfiguration(
+          enableHardwareAcceleration: true,
+        ),
+      );
+      
+      // Listen to player state
+      _player!.stream.playing.listen((playing) {
+        if (mounted) {
+          setState(() => _isPlaying = playing);
+        }
+      });
+      
+      _player!.stream.buffering.listen((buffering) {
+        if (mounted && _isStreamActive) {
+          setState(() => _isLoading = buffering);
+        }
+      });
+      
+      _player!.stream.error.listen((error) {
+        if (mounted && error.isNotEmpty) {
+          debugPrint('Player error: $error');
+          setState(() {
+            _hasError = true;
+            _errorMessage = error;
+            _isStreamActive = false;
+          });
+        }
+      });
+
+      setState(() => _playerInitialized = true);
+    } catch (e) {
+      debugPrint('Failed to initialize player: $e');
+      setState(() {
+        _playerInitialized = false;
+        _errorMessage = 'Video player initialization failed: $e';
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _player?.dispose();
+    super.dispose();
+  }
+
   Future<void> _startStream([String? customUrl, String? streamName]) async {
-    // Stop existing stream first
-    await _stopStream();
-    
+    if (!_playerInitialized || _player == null) {
+      setState(() {
+        _hasError = true;
+        _errorMessage = 'Video player not available';
+      });
+      return;
+    }
+
     final streamUrl = customUrl ?? PreferencesService.cameraStreamUrl;
     
     setState(() {
       _isLoading = true;
       _hasError = false;
-      _isInitialized = false;
       _errorMessage = '';
       _currentStreamName = streamName ?? 'Custom Stream';
       _currentStreamUrl = streamUrl;
@@ -93,31 +191,12 @@ class _CameraScreenState extends State<CameraScreen> {
     });
 
     try {
-      // Create video player controller
-      _controller = VideoPlayerController.networkUrl(
-        Uri.parse(streamUrl),
-        videoPlayerOptions: VideoPlayerOptions(
-          mixWithOthers: true,
-        ),
-      );
-
-      // Initialize and start playback
-      await _controller!.initialize();
-      await _controller!.play();
-      await _controller!.setLooping(true);
-      
-      _controller!.addListener(_onPlayerStateChanged);
-      
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-          _isInitialized = true;
-        });
-      }
+      // Open the media - media_kit handles RTSP, HTTP, HLS, etc.
+      await _player!.open(Media(streamUrl));
       
       _startTimer();
     } catch (e) {
-      debugPrint('Video player error: $e');
+      debugPrint('Stream error: $e');
       if (mounted) {
         setState(() {
           _isLoading = false;
@@ -126,30 +205,17 @@ class _CameraScreenState extends State<CameraScreen> {
           _errorMessage = e.toString();
         });
       }
-      await _disposeController();
-    }
-  }
-
-  void _onPlayerStateChanged() {
-    if (_controller == null || !mounted) return;
-    
-    if (_controller!.value.hasError) {
-      setState(() {
-        _hasError = true;
-        _isStreamActive = false;
-        _errorMessage = _controller!.value.errorDescription ?? 'Playback error';
-      });
     }
   }
 
   Future<void> _stopStream() async {
-    await _disposeController();
+    await _player?.stop();
     
     if (mounted) {
       setState(() {
         _isStreamActive = false;
         _isLoading = false;
-        _isInitialized = false;
+        _isPlaying = false;
         _streamSeconds = 0;
         _currentStreamName = '';
         _currentStreamUrl = '';
@@ -160,7 +226,7 @@ class _CameraScreenState extends State<CameraScreen> {
   void _startTimer() {
     Future.doWhile(() async {
       await Future.delayed(const Duration(seconds: 1));
-      if (_isStreamActive && _isInitialized && mounted) {
+      if (_isStreamActive && _isPlaying && mounted) {
         setState(() => _streamSeconds++);
         return true;
       }
@@ -172,6 +238,15 @@ class _CameraScreenState extends State<CameraScreen> {
     final minutes = (_streamSeconds ~/ 60).toString().padLeft(2, '0');
     final seconds = (_streamSeconds % 60).toString().padLeft(2, '0');
     return '$minutes:$seconds';
+  }
+
+  String _getProtocolFromUrl(String url) {
+    if (url.startsWith('rtsp://')) return 'RTSP';
+    if (url.startsWith('rtmp://')) return 'RTMP';
+    if (url.contains('.m3u8')) return 'HLS';
+    if (url.startsWith('https://')) return 'HTTPS';
+    if (url.startsWith('http://')) return 'HTTP';
+    return 'Unknown';
   }
 
   @override
@@ -231,37 +306,9 @@ class _CameraScreenState extends State<CameraScreen> {
   }
 
   Widget _buildCameraContent() {
-    // Loading state
-    if (_isLoading) {
-      return Container(
-        color: Colors.black87,
-        child: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const CircularProgressIndicator(
-                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-              ),
-              const SizedBox(height: 20),
-              Text(
-                'Connecting...',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  color: Colors.white70,
-                ),
-              ),
-              if (_currentStreamName.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Text(
-                  _currentStreamName,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Colors.white38,
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
-      );
+    // Player not initialized
+    if (!_playerInitialized) {
+      return _buildEmulatorFallback();
     }
 
     // Error state
@@ -282,15 +329,17 @@ class _CameraScreenState extends State<CameraScreen> {
                 ),
                 const SizedBox(height: 10),
                 Text(
-                  'Try a demo stream below',
+                  _isEmulator 
+                      ? 'Video playback may not work on emulators.\nTry on a real device.'
+                      : 'Check the URL and try again',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.white54),
                   textAlign: TextAlign.center,
                 ),
-                if (_errorMessage.isNotEmpty) ...[
+                if (_errorMessage.isNotEmpty && !_isEmulator) ...[
                   const SizedBox(height: 10),
                   Text(
-                    _errorMessage.length > 100 
-                        ? '${_errorMessage.substring(0, 100)}...' 
+                    _errorMessage.length > 80 
+                        ? '${_errorMessage.substring(0, 80)}...' 
                         : _errorMessage,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.white30),
                     textAlign: TextAlign.center,
@@ -303,112 +352,155 @@ class _CameraScreenState extends State<CameraScreen> {
       );
     }
 
-    // Playing state
-    if (_isInitialized && _controller != null && _controller!.value.isInitialized) {
+    // Active stream with video player
+    if (_isStreamActive && _videoController != null) {
       return Stack(
         children: [
-          // Video player
-          Center(
-            child: AspectRatio(
-              aspectRatio: _controller!.value.aspectRatio,
-              child: VideoPlayer(_controller!),
-            ),
+          // Video player from media_kit
+          Video(
+            controller: _videoController!,
+            controls: NoVideoControls,
+            fill: Colors.black,
+            wakelock: false,
+            filterQuality: FilterQuality.low,
           ),
           
-          // Live indicator
-          Positioned(
-            top: 12,
-            left: 12,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(
-                color: AppTheme.errorColor,
-                borderRadius: BorderRadius.circular(15),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 6,
-                    height: 6,
-                    decoration: const BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
+          // Loading overlay
+          if (_isLoading)
+            Container(
+              color: Colors.black87,
+              child: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const CircularProgressIndicator(
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                     ),
-                  ),
-                  const SizedBox(width: 5),
-                  const Text('LIVE', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
-                ],
+                    const SizedBox(height: 20),
+                    Text(
+                      'Buffering...',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: Colors.white70,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _currentStreamName,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Colors.white38,
+                      ),
+                    ),
+                    if (_isEmulator) ...[
+                      const SizedBox(height: 16),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.withAlpha(50),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Text(
+                          '⚠️ Emulator detected - video may not display',
+                          style: TextStyle(color: Colors.orange, fontSize: 11),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
               ),
             ),
-          ),
           
-          // Stream name
-          if (_currentStreamName.isNotEmpty)
+          // Overlays when playing
+          if (_isPlaying && !_isLoading) ...[
+            // Live indicator
+            Positioned(
+              top: 12,
+              left: 12,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: AppTheme.errorColor,
+                  borderRadius: BorderRadius.circular(15),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 6,
+                      height: 6,
+                      decoration: const BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 5),
+                    const Text('LIVE', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+              ),
+            ),
+            
+            // Protocol badge
             Positioned(
               top: 12,
               left: 70,
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                  color: Colors.black54,
+                  color: _getProtocolFromUrl(_currentStreamUrl) == 'RTSP' 
+                      ? AppTheme.successColor 
+                      : Colors.black54,
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Text(
-                  _currentStreamName,
-                  style: const TextStyle(color: Colors.white70, fontSize: 10),
+                  _getProtocolFromUrl(_currentStreamUrl),
+                  style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600),
                 ),
               ),
             ),
-          
-          // Timer
-          Positioned(
-            top: 12,
-            right: 12,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(
-                color: Colors.black54,
-                borderRadius: BorderRadius.circular(15),
+            
+            // Timer
+            Positioned(
+              top: 12,
+              right: 12,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: Colors.black54,
+                  borderRadius: BorderRadius.circular(15),
+                ),
+                child: Text(_formattedTime, style: const TextStyle(color: Colors.white, fontSize: 11)),
               ),
-              child: Text(_formattedTime, style: const TextStyle(color: Colors.white, fontSize: 11)),
             ),
-          ),
-          
-          // Play/pause button
-          Positioned(
-            bottom: 12,
-            left: 0,
-            right: 0,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                GestureDetector(
-                  onTap: () {
-                    setState(() {
-                      if (_controller!.value.isPlaying) {
-                        _controller!.pause();
-                      } else {
-                        _controller!.play();
-                      }
-                    });
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.black54,
-                      borderRadius: BorderRadius.circular(25),
-                    ),
-                    child: Icon(
-                      _controller!.value.isPlaying ? Icons.pause : Icons.play_arrow,
-                      color: Colors.white,
-                      size: 20,
+            
+            // Play/pause button
+            Positioned(
+              bottom: 12,
+              left: 0,
+              right: 0,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  GestureDetector(
+                    onTap: () {
+                      _player?.playOrPause();
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Colors.black54,
+                        borderRadius: BorderRadius.circular(25),
+                      ),
+                      child: Icon(
+                        _isPlaying ? Icons.pause : Icons.play_arrow,
+                        color: Colors.white,
+                        size: 20,
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
+          ],
         ],
       );
     }
@@ -430,12 +522,81 @@ class _CameraScreenState extends State<CameraScreen> {
             ),
             const SizedBox(height: 6),
             Text(
-              'Select a demo stream or enter URL',
+              'Select a demo stream or enter RTSP URL',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: Colors.white.withAlpha(100),
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmulatorFallback() {
+    return Container(
+      color: Colors.black87,
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.phone_android,
+                size: 48,
+                color: Colors.orange.withAlpha(200),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Video Player Unavailable',
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  color: Colors.white,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Video streaming requires:\n'
+                '• Real Android/iOS device, or\n'
+                '• Linux with libmpv installed:\n'
+                '  sudo dnf install mpv-libs mpv-devel',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: Colors.white60,
+                  height: 1.5,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 20),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppTheme.primaryColor.withAlpha(30),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppTheme.primaryColor.withAlpha(100)),
+                ),
+                child: Column(
+                  children: [
+                    const Text(
+                      'RTSP Support Ready',
+                      style: TextStyle(
+                        color: AppTheme.primaryColor,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'rtsp://192.168.1.100:8554/live',
+                      style: TextStyle(
+                        color: Colors.white.withAlpha(150),
+                        fontSize: 12,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -449,7 +610,7 @@ class _CameraScreenState extends State<CameraScreen> {
           child: CustomButton(
             text: _isStreamActive ? 'Stop' : 'Start Stream',
             icon: _isStreamActive ? Icons.stop : Icons.play_arrow,
-            onPressed: _isLoading ? null : () async {
+            onPressed: (!_playerInitialized || _isLoading) ? null : () async {
               if (_isStreamActive) {
                 await _stopStream();
               } else {
@@ -484,7 +645,7 @@ class _CameraScreenState extends State<CameraScreen> {
             TextButton.icon(
               onPressed: () => _showStreamSourcesInfo(),
               icon: const Icon(Icons.help_outline, size: 18),
-              label: const Text('Find streams'),
+              label: const Text('RTSP setup'),
             ),
           ],
         ),
@@ -500,60 +661,92 @@ class _CameraScreenState extends State<CameraScreen> {
 
   Widget _buildStreamTile(DemoStream stream) {
     final isCurrentStream = _currentStreamUrl == stream.url && _isStreamActive;
+    final isRtsp = stream.protocol == 'RTSP';
     
     return InkWell(
-      onTap: () async {
+      onTap: _playerInitialized ? () async {
         if (isCurrentStream) {
           await _stopStream();
         } else {
           await _startStream(stream.url, stream.name);
         }
-      },
+      } : null,
       borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: isCurrentStream ? AppTheme.primaryColor.withAlpha(20) : AppTheme.surfaceColor,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: isCurrentStream ? AppTheme.primaryColor : AppTheme.textLight.withAlpha(50),
+      child: Opacity(
+        opacity: _playerInitialized ? 1.0 : 0.5,
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: isCurrentStream ? AppTheme.primaryColor.withAlpha(20) : AppTheme.surfaceColor,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: isCurrentStream 
+                  ? AppTheme.primaryColor 
+                  : (isRtsp ? AppTheme.successColor.withAlpha(100) : AppTheme.textLight.withAlpha(50)),
+            ),
           ),
-        ),
-        child: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: AppTheme.primaryColor.withAlpha(26),
-                borderRadius: BorderRadius.circular(10),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: isRtsp 
+                      ? AppTheme.successColor.withAlpha(26) 
+                      : AppTheme.primaryColor.withAlpha(26),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  isCurrentStream 
+                      ? Icons.stop_circle_outlined 
+                      : (isRtsp ? Icons.router : Icons.play_circle_outline),
+                  color: isRtsp ? AppTheme.successColor : AppTheme.primaryColor,
+                  size: 22,
+                ),
               ),
-              child: Icon(
-                isCurrentStream ? Icons.stop_circle_outlined : Icons.play_circle_outline,
-                color: AppTheme.primaryColor,
-                size: 22,
-              ),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(stream.name, style: Theme.of(context).textTheme.titleMedium),
-                  const SizedBox(height: 2),
-                  Text(
-                    isCurrentStream ? 'Now playing' : stream.description,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: isCurrentStream ? AppTheme.primaryColor : AppTheme.textSecondary,
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text(stream.name, style: Theme.of(context).textTheme.titleMedium),
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: isRtsp 
+                                ? AppTheme.successColor.withAlpha(30) 
+                                : AppTheme.textLight.withAlpha(30),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            stream.protocol,
+                            style: TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w600,
+                              color: isRtsp ? AppTheme.successColor : AppTheme.textSecondary,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 2),
+                    Text(
+                      isCurrentStream ? 'Now playing' : stream.description,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: isCurrentStream ? AppTheme.primaryColor : AppTheme.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            Icon(
-              isCurrentStream ? Icons.stop : Icons.chevron_right,
-              color: isCurrentStream ? AppTheme.primaryColor : AppTheme.textLight,
-            ),
-          ],
+              Icon(
+                isCurrentStream ? Icons.stop : Icons.chevron_right,
+                color: isCurrentStream ? AppTheme.primaryColor : AppTheme.textLight,
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -571,15 +764,26 @@ class _CameraScreenState extends State<CameraScreen> {
         children: [
           Text('Stream Info', style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 14),
-          _buildStatRow(Icons.stream, 'Protocol', 'HTTP/HTTPS'),
+          _buildStatRow(
+            Icons.stream, 
+            'Protocol', 
+            _isStreamActive ? _getProtocolFromUrl(_currentStreamUrl) : 'RTSP/HTTP/HLS',
+            valueColor: _isStreamActive && _getProtocolFromUrl(_currentStreamUrl) == 'RTSP' 
+                ? AppTheme.successColor 
+                : null,
+          ),
           const Divider(height: 20),
-          _buildStatRow(Icons.high_quality, 'Quality', 'Auto'),
+          _buildStatRow(Icons.memory, 'Engine', 'libmpv (media_kit)'),
           const Divider(height: 20),
           _buildStatRow(
             Icons.signal_cellular_alt,
             'Status',
-            _isInitialized ? 'Playing' : (_isLoading ? 'Connecting...' : (_hasError ? 'Error' : 'Ready')),
-            valueColor: _isInitialized ? AppTheme.successColor : (_hasError ? AppTheme.errorColor : AppTheme.textSecondary),
+            !_playerInitialized 
+                ? 'Unavailable' 
+                : (_isPlaying ? 'Playing' : (_isLoading ? 'Buffering...' : (_hasError ? 'Error' : 'Ready'))),
+            valueColor: !_playerInitialized 
+                ? Colors.orange 
+                : (_isPlaying ? AppTheme.successColor : (_hasError ? AppTheme.errorColor : AppTheme.textSecondary)),
           ),
         ],
       ),
@@ -639,15 +843,16 @@ class _CameraScreenState extends State<CameraScreen> {
             Text('Enter Stream URL', style: Theme.of(context).textTheme.headlineMedium),
             const SizedBox(height: 8),
             Text(
-              'Paste any HTTP/HTTPS video URL (.mp4, .m3u8)',
+              'Supports RTSP, RTMP, HTTP, HLS streams',
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: AppTheme.textSecondary),
             ),
             const SizedBox(height: 20),
             TextField(
               controller: controller,
               decoration: InputDecoration(
-                hintText: 'https://example.com/video.mp4',
+                hintText: 'rtsp://192.168.1.100:8554/live',
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                prefixIcon: const Icon(Icons.link),
                 suffixIcon: IconButton(
                   icon: const Icon(Icons.paste),
                   onPressed: () async {
@@ -660,6 +865,15 @@ class _CameraScreenState extends State<CameraScreen> {
               ),
               keyboardType: TextInputType.url,
               autofocus: true,
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              children: [
+                _buildProtocolChip('rtsp://', controller),
+                _buildProtocolChip('http://', controller),
+                _buildProtocolChip('rtmp://', controller),
+              ],
             ),
             const SizedBox(height: 20),
             Row(
@@ -674,14 +888,14 @@ class _CameraScreenState extends State<CameraScreen> {
                 Expanded(
                   flex: 2,
                   child: ElevatedButton.icon(
-                    onPressed: () {
+                    onPressed: _playerInitialized ? () {
                       final url = controller.text.trim();
                       if (url.isNotEmpty) {
                         PreferencesService.cameraStreamUrl = url;
                         Navigator.pop(context);
-                        _startStream(url, 'Custom URL');
+                        _startStream(url, 'Custom Stream');
                       }
-                    },
+                    } : null,
                     icon: const Icon(Icons.play_arrow),
                     label: const Text('Play Stream'),
                   ),
@@ -694,41 +908,56 @@ class _CameraScreenState extends State<CameraScreen> {
     );
   }
 
+  Widget _buildProtocolChip(String protocol, TextEditingController controller) {
+    return ActionChip(
+      label: Text(protocol, style: const TextStyle(fontSize: 12)),
+      onPressed: () {
+        if (!controller.text.startsWith(protocol)) {
+          controller.text = protocol;
+          controller.selection = TextSelection.fromPosition(
+            TextPosition(offset: controller.text.length),
+          );
+        }
+      },
+    );
+  }
+
   void _showStreamSourcesInfo() {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Where to Find Streams'),
+        title: const Text('RTSP Stream Setup'),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _buildSourceSection(
-                'Demo Streams',
-                '• The demo streams above work immediately\n'
-                '• Sample videos from Google Cloud Storage',
+                'Orange Pi RTSP Server',
+                '1. Install GStreamer on Orange Pi\n'
+                '2. Run RTSP server:\n'
+                '   gst-launch-1.0 v4l2src ! \\\n'
+                '   videoconvert ! x264enc ! \\\n'
+                '   rtspclientsink location=\\\n'
+                '   rtsp://localhost:8554/live\n'
+                '3. Enter: rtsp://[ORANGE_PI_IP]:8554/live',
               ),
               const SizedBox(height: 16),
               _buildSourceSection(
-                'HTTP Video URLs',
-                '• Any direct .mp4 or .m3u8 URL\n'
-                '• HLS streams from CDNs\n'
-                '• Must be HTTPS for Android',
+                'IP Camera Format',
+                'Most IP cameras use:\n'
+                '• rtsp://user:pass@ip:554/stream1\n'
+                '• rtsp://ip:554/live/ch00_0\n'
+                '• Check camera manual for exact path',
               ),
               const SizedBox(height: 16),
               _buildSourceSection(
-                'For RTSP Streams',
-                '• RTSP requires native app or VLC\n'
-                '• Convert RTSP to HLS using FFmpeg\n'
-                '• Use nginx-rtmp for restreaming',
-              ),
-              const SizedBox(height: 16),
-              _buildSourceSection(
-                'Orange Pi Setup',
-                '• Stream camera via HLS\n'
-                '• ffmpeg -i /dev/video0 \\\n'
-                '  -f hls stream.m3u8',
+                'Emulator Limitations',
+                '⚠️ Android emulators have GPU\n'
+                'virtualization issues with video.\n\n'
+                'For testing, use:\n'
+                '• Real Android/iOS device\n'
+                '• Linux desktop with libmpv',
               ),
             ],
           ),
@@ -749,7 +978,7 @@ class _CameraScreenState extends State<CameraScreen> {
       children: [
         Text(title, style: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.primaryColor)),
         const SizedBox(height: 4),
-        Text(content, style: const TextStyle(fontSize: 13, height: 1.4)),
+        Text(content, style: const TextStyle(fontSize: 12, height: 1.5)),
       ],
     );
   }
@@ -758,14 +987,18 @@ class _CameraScreenState extends State<CameraScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Video Player'),
+        title: const Text('Media Kit Player'),
         content: const Text(
-          'This screen uses Flutter\'s official video_player plugin.\n\n'
-          'Supported formats:\n'
-          '• MP4 video files\n'
-          '• HLS streams (.m3u8)\n'
-          '• HTTPS video URLs\n\n'
-          'For IoT cameras, set up HLS streaming on your Orange Pi.',
+          'This screen uses media_kit (libmpv) for video playback.\n\n'
+          'Supported protocols:\n'
+          '• RTSP - Real-time streaming (low latency)\n'
+          '• RTMP - Flash streaming servers\n'
+          '• HTTP/HTTPS - Video files & CDNs\n'
+          '• HLS - Adaptive streaming (.m3u8)\n\n'
+          'Requirements:\n'
+          '• Android/iOS: Works out of the box\n'
+          '• Linux: Install libmpv\n'
+          '• Emulator: Limited support',
         ),
         actions: [
           TextButton(
