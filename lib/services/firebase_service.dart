@@ -2,6 +2,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
+import '../firebase_options.dart';
 
 /// Firebase service for initializing and managing Firebase connections.
 /// Supports both real Firebase and demo/offline mode for development.
@@ -17,7 +18,9 @@ class FirebaseService {
     if (_initialized) return;
     
     try {
-      await Firebase.initializeApp();
+      // Try to get platform-specific Firebase options
+      final options = DefaultFirebaseOptions.currentPlatform;
+      await Firebase.initializeApp(options: options);
       _initialized = true;
       _useOfflineMode = false;
       

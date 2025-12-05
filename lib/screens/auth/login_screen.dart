@@ -41,7 +41,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
     if (success) {
       Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (context) => const MainNavigation()),
+        MaterialPageRoute(builder: (context) => MainNavigation(key: MainNavigation.navigationKey)),
       );
     } else {
       ScaffoldMessenger.of(context).showSnackBar(

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../config/theme.dart';
 import '../../providers/feeder_provider.dart';
+import '../main_navigation.dart';
 import 'package:intl/intl.dart';
 
 class HomeScreen extends StatelessWidget {
@@ -13,6 +14,18 @@ class HomeScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('Dashboard'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: () {
+              Provider.of<FeederProvider>(context, listen: false).refreshData();
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Refreshing data...'),
+                  duration: Duration(seconds: 1),
+                ),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.notifications_outlined),
             onPressed: () {
@@ -131,15 +144,106 @@ class HomeScreen extends StatelessWidget {
         ),
         const SizedBox(width: 15),
         Expanded(
-          child: _buildStatCard(
-            context,
-            icon: Icons.inventory_2_outlined,
-            label: 'Food Level',
-            value: '${provider.foodLevel.toInt()}%',
-            color: AppTheme.accentColor,
-          ),
+          child: _buildFoodLevelCard(context, provider),
         ),
       ],
+    );
+  }
+  
+  Widget _buildFoodLevelCard(BuildContext context, FeederProvider provider) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceColor,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: AppTheme.accentColor.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.inventory_2_outlined, color: AppTheme.accentColor, size: 24),
+              ),
+              GestureDetector(
+                onTap: () => _showResetFoodLevelDialog(context, provider),
+                child: Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: AppTheme.primaryColor.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(
+                    Icons.refresh,
+                    color: AppTheme.primaryColor,
+                    size: 18,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            '${provider.foodLevel.toInt()}%',
+            style: Theme.of(context).textTheme.displaySmall?.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Food Level',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+        ],
+      ),
+    );
+  }
+  
+  void _showResetFoodLevelDialog(BuildContext context, FeederProvider provider) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Reset Food Level'),
+        content: const Text(
+          'Did you refill the feeder? This will reset the food level to 100%.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              final success = await provider.resetFoodLevel();
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      success ? 'Food level reset to 100%!' : 'Failed to reset food level',
+                    ),
+                    backgroundColor: success ? AppTheme.successColor : AppTheme.errorColor,
+                  ),
+                );
+              }
+            },
+            child: const Text('Reset', style: TextStyle(color: AppTheme.primaryColor)),
+          ),
+        ],
+      ),
     );
   }
 
@@ -447,7 +551,8 @@ class HomeScreen extends StatelessWidget {
             ),
             TextButton(
               onPressed: () {
-                // Navigate to history tab
+                // Navigate to history tab (index 2)
+                MainNavigation.navigateTo(2);
               },
               child: const Text('View All'),
             ),

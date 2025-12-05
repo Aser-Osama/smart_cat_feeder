@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/firebase_service.dart';
 import '../services/preferences_service.dart';
+import '../services/notification_service.dart';
 
 /// Callback type for authentication state changes
 typedef AuthStateCallback = void Function(String? userId);
@@ -140,6 +141,10 @@ class AuthProvider with ChangeNotifier {
         _isLoading = false;
         notifyListeners();
         _notifyAuthStateChange(); // Notify FeederProvider to load user data
+        
+        // Save FCM token for push notifications from Cloud Functions
+        await NotificationService.saveTokenForUser(_userId!);
+        
         return true;
       }
       
@@ -168,6 +173,10 @@ class AuthProvider with ChangeNotifier {
         _isLoading = false;
         notifyListeners();
         _notifyAuthStateChange(); // Notify FeederProvider to load user data
+        
+        // Save FCM token for push notifications from Cloud Functions
+        await NotificationService.saveTokenForUser(_userId!);
+        
         return true;
       }
       
@@ -263,6 +272,10 @@ class AuthProvider with ChangeNotifier {
         _isLoading = false;
         notifyListeners();
         _notifyAuthStateChange(); // Notify FeederProvider to initialize user data
+        
+        // Save FCM token for push notifications from Cloud Functions
+        await NotificationService.saveTokenForUser(_userId!);
+        
         return true;
       }
       
@@ -300,6 +313,10 @@ class AuthProvider with ChangeNotifier {
         _isLoading = false;
         notifyListeners();
         _notifyAuthStateChange(); // Notify FeederProvider to initialize user data
+        
+        // Save FCM token for push notifications from Cloud Functions
+        await NotificationService.saveTokenForUser(_userId!);
+        
         return true;
       }
       
@@ -374,6 +391,11 @@ class AuthProvider with ChangeNotifier {
     notifyListeners();
     
     try {
+      // Remove FCM token before signing out
+      if (_userId != null && !FirebaseService.isOfflineMode) {
+        await NotificationService.removeTokenForUser(_userId!);
+      }
+      
       if (!FirebaseService.isOfflineMode) {
         await FirebaseService.auth?.signOut();
       }

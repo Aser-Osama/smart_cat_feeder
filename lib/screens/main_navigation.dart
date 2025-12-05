@@ -6,14 +6,31 @@ import 'schedule/schedule_screen.dart';
 import 'profile/profile_screen.dart';
 
 class MainNavigation extends StatefulWidget {
-  const MainNavigation({super.key});
+  MainNavigation({super.key}) : super();
+  
+  /// Global key to access navigation state for programmatic navigation
+  static final GlobalKey<_MainNavigationState> navigationKey = GlobalKey<_MainNavigationState>();
 
   @override
   State<MainNavigation> createState() => _MainNavigationState();
+  
+  /// Static method to navigate to a tab from anywhere
+  static void navigateTo(int index) {
+    navigationKey.currentState?.navigateToTab(index);
+  }
 }
 
 class _MainNavigationState extends State<MainNavigation> {
   int _currentIndex = 0;
+  
+  /// Navigate to a specific tab by index
+  void navigateToTab(int index) {
+    if (index >= 0 && index < _screens.length) {
+      setState(() {
+        _currentIndex = index;
+      });
+    }
+  }
 
   final List<Widget> _screens = [
     const HomeScreen(),

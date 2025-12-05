@@ -43,7 +43,7 @@ class HistoryScreen extends StatelessWidget {
           final logs = feederProvider.feedingHistory;
           
           if (logs.isEmpty) {
-            return _buildEmptyState(context);
+            return _buildEmptyState(context, feederProvider.historyFilter != null);
           }
           
           return RefreshIndicator(
@@ -52,6 +52,10 @@ class HistoryScreen extends StatelessWidget {
               children: [
                 // Stats Summary
                 _buildStatsSummary(context, feederProvider),
+                
+                // Active Filter Indicator
+                if (feederProvider.historyFilter != null)
+                  _buildActiveFilterChip(context, feederProvider),
                 
                 // History List
                 Expanded(
@@ -154,6 +158,61 @@ class HistoryScreen extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+  
+  Widget _buildActiveFilterChip(BuildContext context, FeederProvider provider) {
+    final filterName = provider.historyFilter == FeedingType.manual 
+        ? 'Manual' 
+        : 'Scheduled';
+    final filterColor = provider.historyFilter == FeedingType.manual
+        ? AppTheme.secondaryColor
+        : AppTheme.primaryColor;
+    
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: filterColor.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: filterColor),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  provider.historyFilter == FeedingType.manual 
+                      ? Icons.touch_app 
+                      : Icons.schedule,
+                  size: 16,
+                  color: filterColor,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  '$filterName Only',
+                  style: TextStyle(
+                    color: filterColor,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 12,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                GestureDetector(
+                  onTap: () => provider.setHistoryFilter(null),
+                  child: Icon(
+                    Icons.close,
+                    size: 16,
+                    color: filterColor,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -292,7 +351,7 @@ class HistoryScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildEmptyState(BuildContext context) {
+  Widget _buildEmptyState(BuildContext context, bool isFiltered) {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(40),
@@ -305,23 +364,36 @@ class HistoryScreen extends StatelessWidget {
                 color: AppTheme.primaryColor.withOpacity(0.1),
                 shape: BoxShape.circle,
               ),
-              child: const Icon(
-                Icons.history,
+              child: Icon(
+                isFiltered ? Icons.filter_list_off : Icons.history,
                 size: 80,
                 color: AppTheme.primaryColor,
               ),
             ),
             const SizedBox(height: 30),
             Text(
-              'No Feeding History',
+              isFiltered ? 'No Matching Feedings' : 'No Feeding History',
               style: Theme.of(context).textTheme.headlineMedium,
             ),
             const SizedBox(height: 10),
             Text(
-              'Start feeding your cat to see the history here',
+              isFiltered 
+                  ? 'Try changing or clearing the filter'
+                  : 'Start feeding your cat to see the history here',
               style: Theme.of(context).textTheme.bodyMedium,
               textAlign: TextAlign.center,
             ),
+            if (isFiltered) ...[
+              const SizedBox(height: 20),
+              TextButton.icon(
+                onPressed: () {
+                  Provider.of<FeederProvider>(context, listen: false)
+                      .setHistoryFilter(null);
+                },
+                icon: const Icon(Icons.clear_all),
+                label: const Text('Clear Filter'),
+              ),
+            ],
           ],
         ),
       ),
@@ -350,9 +422,12 @@ class HistoryScreen extends StatelessWidget {
   }
 
   void _showFilterDialog(BuildContext context) {
+    final feederProvider = Provider.of<FeederProvider>(context, listen: false);
+    final currentFilter = feederProvider.historyFilter;
+    
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('Filter History'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -360,17 +435,35 @@ class HistoryScreen extends StatelessWidget {
             ListTile(
               leading: const Icon(Icons.all_inclusive),
               title: const Text('All Feedings'),
-              onTap: () => Navigator.pop(context),
+              trailing: currentFilter == null 
+                  ? const Icon(Icons.check, color: AppTheme.successColor)
+                  : null,
+              onTap: () {
+                feederProvider.setHistoryFilter(null);
+                Navigator.pop(dialogContext);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Showing all feedings'),
+                    backgroundColor: AppTheme.successColor,
+                    duration: Duration(seconds: 1),
+                  ),
+                );
+              },
             ),
             ListTile(
               leading: const Icon(Icons.touch_app),
               title: const Text('Manual Only'),
+              trailing: currentFilter == FeedingType.manual 
+                  ? const Icon(Icons.check, color: AppTheme.successColor)
+                  : null,
               onTap: () {
-                Navigator.pop(context);
+                feederProvider.setHistoryFilter(FeedingType.manual);
+                Navigator.pop(dialogContext);
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text('Filter: Manual feedings'),
+                    content: Text('Showing manual feedings only'),
                     backgroundColor: AppTheme.secondaryColor,
+                    duration: Duration(seconds: 1),
                   ),
                 );
               },
@@ -378,12 +471,17 @@ class HistoryScreen extends StatelessWidget {
             ListTile(
               leading: const Icon(Icons.schedule),
               title: const Text('Scheduled Only'),
+              trailing: currentFilter == FeedingType.scheduled 
+                  ? const Icon(Icons.check, color: AppTheme.successColor)
+                  : null,
               onTap: () {
-                Navigator.pop(context);
+                feederProvider.setHistoryFilter(FeedingType.scheduled);
+                Navigator.pop(dialogContext);
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text('Filter: Scheduled feedings'),
+                    content: Text('Showing scheduled feedings only'),
                     backgroundColor: AppTheme.primaryColor,
+                    duration: Duration(seconds: 1),
                   ),
                 );
               },
@@ -392,7 +490,7 @@ class HistoryScreen extends StatelessWidget {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogContext),
             child: const Text('Close'),
           ),
         ],

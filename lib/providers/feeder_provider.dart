@@ -17,14 +17,29 @@ class FeederProvider with ChangeNotifier {
   double _foodLevel = 75.0; // percentage
   String? _errorMessage;
   String? _currentUserId;
+  FeedingType? _historyFilter; // null = all, manual, or scheduled
   
   bool get isFeeding => _isFeeding;
   bool get isLoading => _isLoading;
-  List<FeedingLog> get feedingHistory => _feedingHistory;
+  List<FeedingLog> get feedingHistory => _filteredFeedingHistory;
+  List<FeedingLog> get allFeedingHistory => _feedingHistory;
   List<FeedingSchedule> get schedules => _schedules;
   bool get catDetected => _catDetected;
   double get foodLevel => _foodLevel;
   String? get errorMessage => _errorMessage;
+  FeedingType? get historyFilter => _historyFilter;
+  
+  /// Get filtered feeding history based on current filter
+  List<FeedingLog> get _filteredFeedingHistory {
+    if (_historyFilter == null) return _feedingHistory;
+    return _feedingHistory.where((log) => log.type == _historyFilter).toList();
+  }
+  
+  /// Set history filter (null = all)
+  void setHistoryFilter(FeedingType? filter) {
+    _historyFilter = filter;
+    notifyListeners();
+  }
   
   FeederProvider() {
     // Don't auto-initialize - wait for user authentication
@@ -363,6 +378,25 @@ class FeederProvider with ChangeNotifier {
   void updateFoodLevel(double level) {
     _foodLevel = level.clamp(0, 100);
     notifyListeners();
+  }
+  
+  /// Reset food level to 100% (after refilling)
+  Future<bool> resetFoodLevel() async {
+    try {
+      _foodLevel = 100.0;
+      
+      // Save to Firestore if available
+      if (!FirebaseService.isOfflineMode && FirebaseService.currentUserId != null) {
+        await _updateFeederStatus();
+      }
+      
+      notifyListeners();
+      return true;
+    } catch (e) {
+      _errorMessage = 'Failed to reset food level: $e';
+      notifyListeners();
+      return false;
+    }
   }
   
   // --- Statistics ---

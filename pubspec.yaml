@@ -18,11 +18,11 @@ dependencies:
   # State Management
   provider: ^6.1.1
   
-  # Firebase Integration (for future phases)
-  firebase_core: ^2.24.2
-  firebase_auth: ^4.15.3
-  cloud_firestore: ^4.13.6
-  firebase_messaging: ^14.7.9
+  # Firebase Integration
+  firebase_core: ^3.8.1
+  firebase_auth: ^5.3.4
+  cloud_firestore: ^5.6.0
+  firebase_messaging: ^15.1.6
   
   # Utilities
   intl: ^0.19.0
