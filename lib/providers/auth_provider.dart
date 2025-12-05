@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/firebase_service.dart';
 import '../services/preferences_service.dart';
+
+/// Callback type for authentication state changes
+typedef AuthStateCallback = void Function(String? userId);
 
 /// Authentication provider with Firebase Auth integration.
 /// Falls back to local/offline mode when Firebase is not configured.
@@ -13,6 +17,9 @@ class AuthProvider with ChangeNotifier {
   String? _userId;
   String? _errorMessage;
   
+  /// Callback to notify when user auth state changes
+  AuthStateCallback? onAuthStateChanged;
+  
   bool get isAuthenticated => _isAuthenticated;
   bool get isLoading => _isLoading;
   String? get userName => _userName;
@@ -22,6 +29,16 @@ class AuthProvider with ChangeNotifier {
   
   AuthProvider() {
     _checkAuthState();
+  }
+  
+  /// Set the callback for auth state changes
+  void setAuthStateCallback(AuthStateCallback callback) {
+    onAuthStateChanged = callback;
+  }
+  
+  /// Notify listeners about auth state change
+  void _notifyAuthStateChange() {
+    onAuthStateChanged?.call(_userId);
   }
   
   /// Check if user is already authenticated (on app start)
@@ -40,11 +57,37 @@ class AuthProvider with ChangeNotifier {
       if (user != null) {
         _isAuthenticated = true;
         _userEmail = user.email;
-        _userName = user.displayName ?? user.email?.split('@')[0];
         _userId = user.uid;
+        
+        // Try to get display name from Auth first
+        _userName = user.displayName;
+        
+        // If not available, fetch from Firestore
+        if (_userName == null || _userName!.isEmpty) {
+          _userName = await _fetchUserNameFromFirestore(user.uid);
+        }
+        
+        // Final fallback to email prefix
+        _userName ??= user.email?.split('@')[0];
       }
     }
     notifyListeners();
+    
+    // Notify FeederProvider about initial auth state
+    _notifyAuthStateChange();
+  }
+  
+  /// Fetch user name from Firestore
+  Future<String?> _fetchUserNameFromFirestore(String uid) async {
+    try {
+      final doc = await FirebaseService.firestore?.collection('users').doc(uid).get();
+      if (doc != null && doc.exists) {
+        return doc.data()?['displayName'] as String?;
+      }
+    } catch (e) {
+      debugPrint('Could not fetch user name from Firestore: $e');
+    }
+    return null;
   }
   
   /// Login with email and password
@@ -79,12 +122,24 @@ class AuthProvider with ChangeNotifier {
       
       final user = credential.user;
       if (user != null) {
+        // Reload user to get latest profile data
+        await user.reload();
+        final refreshedUser = FirebaseService.auth!.currentUser;
+        
         _isAuthenticated = true;
-        _userEmail = user.email;
-        _userName = user.displayName ?? user.email?.split('@')[0];
-        _userId = user.uid;
+        _userEmail = refreshedUser?.email ?? user.email;
+        _userId = refreshedUser?.uid ?? user.uid;
+        
+        // Try to get display name, fallback to Firestore, then email prefix
+        _userName = refreshedUser?.displayName;
+        if (_userName == null || _userName!.isEmpty) {
+          _userName = await _fetchUserNameFromFirestore(_userId!);
+        }
+        _userName ??= _userEmail?.split('@')[0];
+        
         _isLoading = false;
         notifyListeners();
+        _notifyAuthStateChange(); // Notify FeederProvider to load user data
         return true;
       }
       
@@ -94,6 +149,29 @@ class AuthProvider with ChangeNotifier {
       return false;
     } on FirebaseAuthException catch (e) {
       _errorMessage = _getAuthErrorMessage(e.code);
+      _isLoading = false;
+      notifyListeners();
+      return false;
+    } catch (e) {
+      // Handle Pigeon type cast errors and other unexpected exceptions
+      // Check if authentication actually succeeded despite the error
+      final user = FirebaseService.auth?.currentUser;
+      if (user != null && user.email == email) {
+        _isAuthenticated = true;
+        _userEmail = user.email;
+        _userId = user.uid;
+        _userName = user.displayName;
+        if (_userName == null || _userName!.isEmpty) {
+          _userName = await _fetchUserNameFromFirestore(_userId!);
+        }
+        _userName ??= _userEmail?.split('@')[0];
+        _isLoading = false;
+        notifyListeners();
+        _notifyAuthStateChange(); // Notify FeederProvider to load user data
+        return true;
+      }
+      
+      _errorMessage = 'Login failed: ${e.toString()}';
       _isLoading = false;
       notifyListeners();
       return false;
@@ -119,6 +197,7 @@ class AuthProvider with ChangeNotifier {
       
       _isLoading = false;
       notifyListeners();
+      _notifyAuthStateChange(); // Notify FeederProvider
       return true;
     }
     
@@ -158,8 +237,24 @@ class AuthProvider with ChangeNotifier {
       
       final user = credential.user;
       if (user != null) {
-        // Update display name
-        await user.updateDisplayName(name);
+        // Update display name in Firebase Auth
+        try {
+          await user.updateDisplayName(name);
+          await user.reload(); // Reload to persist the display name
+        } catch (e) {
+          debugPrint('Warning: Could not update display name in Auth: $e');
+        }
+        
+        // Store user profile in Firestore for reliable retrieval
+        try {
+          await FirebaseService.firestore?.collection('users').doc(user.uid).set({
+            'displayName': name,
+            'email': email,
+            'createdAt': DateTime.now().toIso8601String(),
+          }, SetOptions(merge: true));
+        } catch (e) {
+          debugPrint('Warning: Could not save user profile to Firestore: $e');
+        }
         
         _isAuthenticated = true;
         _userEmail = user.email;
@@ -167,6 +262,7 @@ class AuthProvider with ChangeNotifier {
         _userId = user.uid;
         _isLoading = false;
         notifyListeners();
+        _notifyAuthStateChange(); // Notify FeederProvider to initialize user data
         return true;
       }
       
@@ -176,6 +272,38 @@ class AuthProvider with ChangeNotifier {
       return false;
     } on FirebaseAuthException catch (e) {
       _errorMessage = _getAuthErrorMessage(e.code);
+      _isLoading = false;
+      notifyListeners();
+      return false;
+    } catch (e) {
+      // Handle Pigeon type cast errors - check if registration actually succeeded
+      final user = FirebaseService.auth?.currentUser;
+      if (user != null && user.email == email) {
+        // Registration succeeded, save profile data
+        try {
+          await user.updateDisplayName(name);
+          await user.reload();
+        } catch (_) {}
+        
+        try {
+          await FirebaseService.firestore?.collection('users').doc(user.uid).set({
+            'displayName': name,
+            'email': email,
+            'createdAt': DateTime.now().toIso8601String(),
+          }, SetOptions(merge: true));
+        } catch (_) {}
+        
+        _isAuthenticated = true;
+        _userEmail = user.email;
+        _userName = name;
+        _userId = user.uid;
+        _isLoading = false;
+        notifyListeners();
+        _notifyAuthStateChange(); // Notify FeederProvider to initialize user data
+        return true;
+      }
+      
+      _errorMessage = 'Registration failed: ${e.toString()}';
       _isLoading = false;
       notifyListeners();
       return false;
@@ -199,6 +327,7 @@ class AuthProvider with ChangeNotifier {
       
       _isLoading = false;
       notifyListeners();
+      _notifyAuthStateChange(); // Notify FeederProvider
       return true;
     }
     
@@ -258,6 +387,7 @@ class AuthProvider with ChangeNotifier {
       _userId = null;
       _isLoading = false;
       notifyListeners();
+      _notifyAuthStateChange(); // Notify FeederProvider to clear data
     } catch (e) {
       _errorMessage = e.toString();
       _isLoading = false;

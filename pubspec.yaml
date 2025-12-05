@@ -27,7 +27,7 @@ dependencies:
   # Utilities
   intl: ^0.19.0
   shared_preferences: ^2.2.2
-  device_info_plus: ^10.1.0
+  device_info_plus: ^11.0.0
   
   # Media Kit - RTSP/RTMP/HLS capable player based on libmpv
   media_kit: ^1.1.11

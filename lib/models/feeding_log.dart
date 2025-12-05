@@ -89,9 +89,21 @@ class FeedingLog {
   /// Create from Firestore document
   factory FeedingLog.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
+    
+    // Safely parse timestamp
+    DateTime parsedTimestamp;
+    final timestampData = data['timestamp'];
+    if (timestampData is Timestamp) {
+      parsedTimestamp = timestampData.toDate();
+    } else if (timestampData is String) {
+      parsedTimestamp = DateTime.tryParse(timestampData) ?? DateTime.now();
+    } else {
+      parsedTimestamp = DateTime.now();
+    }
+    
     return FeedingLog(
       id: doc.id,
-      timestamp: (data['timestamp'] as Timestamp).toDate(),
+      timestamp: parsedTimestamp,
       amount: (data['amount'] ?? 0.0).toDouble(),
       type: data['type'] == 'manual' ? FeedingType.manual : FeedingType.scheduled,
       success: data['success'] ?? true,

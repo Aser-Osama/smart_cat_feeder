@@ -213,7 +213,7 @@ class ProfileScreen extends StatelessWidget {
             ),
             child: Center(
               child: Text(
-                authProvider.userName?.substring(0, 1).toUpperCase() ?? 'U',
+                _getInitial(authProvider.userName),
                 style: Theme.of(context).textTheme.displayMedium?.copyWith(
                   color: AppTheme.primaryColor,
                   fontWeight: FontWeight.bold,
@@ -381,6 +381,11 @@ class ProfileScreen extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  String _getInitial(String? name) {
+    if (name == null || name.isEmpty) return 'U';
+    return name.substring(0, 1).toUpperCase();
   }
 
   void _handleLogout(BuildContext context, AuthProvider authProvider) {

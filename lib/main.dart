@@ -30,15 +30,44 @@ void main() async {
   runApp(const MyApp());
 }
 
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
   const MyApp({super.key});
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  late final AuthProvider _authProvider;
+  late final FeederProvider _feederProvider;
+  
+  @override
+  void initState() {
+    super.initState();
+    
+    // Create providers
+    _authProvider = AuthProvider();
+    _feederProvider = FeederProvider();
+    
+    // Connect auth changes to feeder provider
+    _authProvider.setAuthStateCallback((userId) {
+      _feederProvider.onUserChanged(userId);
+    });
+  }
+  
+  @override
+  void dispose() {
+    _authProvider.dispose();
+    _feederProvider.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (_) => AuthProvider()),
-        ChangeNotifierProvider(create: (_) => FeederProvider()),
+        ChangeNotifierProvider.value(value: _authProvider),
+        ChangeNotifierProvider.value(value: _feederProvider),
       ],
       child: MaterialApp(
         title: 'Smart Cat Feeder',

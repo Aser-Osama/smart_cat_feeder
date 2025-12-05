@@ -62,22 +62,41 @@ class FeedingSchedule {
 
   /// Create from Map (Firestore/JSON)
   factory FeedingSchedule.fromMap(Map<String, dynamic> map) {
+    // Safely parse weekdays list from Firestore (comes as List<dynamic>)
+    List<int> parsedWeekdays;
+    final weekdaysData = map['weekdays'];
+    if (weekdaysData is List) {
+      parsedWeekdays = weekdaysData.map((e) => (e as num).toInt()).toList();
+    } else {
+      parsedWeekdays = [1, 2, 3, 4, 5, 6, 7];
+    }
+    
+    // Safely parse dates
+    DateTime? parsedCreatedAt;
+    DateTime? parsedUpdatedAt;
+    try {
+      if (map['createdAt'] != null) {
+        parsedCreatedAt = DateTime.parse(map['createdAt'].toString());
+      }
+      if (map['updatedAt'] != null) {
+        parsedUpdatedAt = DateTime.parse(map['updatedAt'].toString());
+      }
+    } catch (_) {
+      // Ignore date parsing errors
+    }
+    
     return FeedingSchedule(
-      id: map['id'] ?? '',
-      name: map['name'] ?? '',
+      id: map['id']?.toString() ?? '',
+      name: map['name']?.toString() ?? '',
       time: TimeOfDay(
-        hour: map['timeHour'] ?? 0,
-        minute: map['timeMinute'] ?? 0,
+        hour: (map['timeHour'] as num?)?.toInt() ?? 0,
+        minute: (map['timeMinute'] as num?)?.toInt() ?? 0,
       ),
-      amount: (map['amount'] ?? 50.0).toDouble(),
-      isActive: map['isActive'] ?? true,
-      weekdays: List<int>.from(map['weekdays'] ?? [1, 2, 3, 4, 5, 6, 7]),
-      createdAt: map['createdAt'] != null 
-          ? DateTime.parse(map['createdAt']) 
-          : null,
-      updatedAt: map['updatedAt'] != null 
-          ? DateTime.parse(map['updatedAt']) 
-          : null,
+      amount: (map['amount'] as num?)?.toDouble() ?? 50.0,
+      isActive: map['isActive'] as bool? ?? true,
+      weekdays: parsedWeekdays,
+      createdAt: parsedCreatedAt,
+      updatedAt: parsedUpdatedAt,
     );
   }
 

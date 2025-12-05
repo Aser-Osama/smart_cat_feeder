@@ -16,6 +16,7 @@ class FeederProvider with ChangeNotifier {
   bool _catDetected = false;
   double _foodLevel = 75.0; // percentage
   String? _errorMessage;
+  String? _currentUserId;
   
   bool get isFeeding => _isFeeding;
   bool get isLoading => _isLoading;
@@ -26,7 +27,34 @@ class FeederProvider with ChangeNotifier {
   String? get errorMessage => _errorMessage;
   
   FeederProvider() {
+    // Don't auto-initialize - wait for user authentication
     _initializeData();
+  }
+  
+  /// Called when user authentication state changes
+  /// This reloads data for the new user or clears data on logout
+  Future<void> onUserChanged(String? userId) async {
+    if (_currentUserId == userId) return;
+    
+    _currentUserId = userId;
+    
+    if (userId == null) {
+      // User logged out - clear all data
+      _clearData();
+    } else {
+      // User logged in - load their data
+      await _initializeData();
+    }
+  }
+  
+  /// Clear all local data (on logout)
+  void _clearData() {
+    _feedingHistory = [];
+    _schedules = [];
+    _catDetected = false;
+    _foodLevel = 75.0;
+    _errorMessage = null;
+    notifyListeners();
   }
   
   /// Initialize data from Firestore or local storage
@@ -35,7 +63,7 @@ class FeederProvider with ChangeNotifier {
     notifyListeners();
     
     if (FirebaseService.isOfflineMode) {
-      _initializeMockData();
+      _initializeEmptyState();
     } else {
       await _loadFromFirestore();
     }
@@ -44,15 +72,22 @@ class FeederProvider with ChangeNotifier {
     notifyListeners();
   }
   
+  /// Initialize with empty state (no mock data)
+  void _initializeEmptyState() {
+    _feedingHistory = [];
+    _schedules = [];
+  }
+  
   /// Load data from Firestore
   Future<void> _loadFromFirestore() async {
     try {
       final userId = FirebaseService.currentUserId;
       if (userId == null) {
-        _initializeMockData();
+        _initializeEmptyState();
         return;
       }
       
+      _currentUserId = userId;
       final firestore = FirebaseService.firestore!;
       
       // Load feeding history
@@ -79,8 +114,9 @@ class FeederProvider with ChangeNotifier {
           .map((doc) => FeedingSchedule.fromMap({...doc.data(), 'id': doc.id}))
           .toList();
       
+      // If no schedules exist, create default schedules and save them to Firestore
       if (_schedules.isEmpty) {
-        _initializeDefaultSchedules();
+        await _createDefaultSchedulesInFirestore(userId);
       }
       
       // Load feeder status
@@ -95,57 +131,22 @@ class FeederProvider with ChangeNotifier {
         final data = feederDoc.data()!;
         _foodLevel = (data['foodLevel'] ?? 75.0).toDouble();
         _catDetected = data['catDetected'] ?? false;
+      } else {
+        // Initialize feeder status in Firestore
+        await _updateFeederStatus();
       }
       
     } catch (e) {
       debugPrint('Error loading from Firestore: $e');
-      _initializeMockData();
+      _initializeEmptyState();
     }
   }
   
-  /// Initialize with mock data for offline mode
-  void _initializeMockData() {
-    _feedingHistory = [
-      FeedingLog(
-        id: '1',
-        timestamp: DateTime.now().subtract(const Duration(hours: 2)),
-        amount: 50.0,
-        type: FeedingType.manual,
-        success: true,
-      ),
-      FeedingLog(
-        id: '2',
-        timestamp: DateTime.now().subtract(const Duration(hours: 8)),
-        amount: 50.0,
-        type: FeedingType.scheduled,
-        success: true,
-        scheduleName: 'Morning Feeding',
-      ),
-      FeedingLog(
-        id: '3',
-        timestamp: DateTime.now().subtract(const Duration(days: 1)),
-        amount: 50.0,
-        type: FeedingType.scheduled,
-        success: true,
-        scheduleName: 'Evening Feeding',
-      ),
-      FeedingLog(
-        id: '4',
-        timestamp: DateTime.now().subtract(const Duration(days: 1, hours: 8)),
-        amount: 50.0,
-        type: FeedingType.manual,
-        success: true,
-      ),
-    ];
-    
-    _initializeDefaultSchedules();
-  }
-  
-  /// Initialize default feeding schedules
-  void _initializeDefaultSchedules() {
-    _schedules = [
+  /// Create default feeding schedules and save them to Firestore
+  Future<void> _createDefaultSchedulesInFirestore(String userId) async {
+    final defaultSchedules = [
       FeedingSchedule(
-        id: 'default_1',
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
         name: 'Morning Feeding',
         time: const TimeOfDay(hour: 8, minute: 0),
         amount: 50,
@@ -154,7 +155,7 @@ class FeederProvider with ChangeNotifier {
         createdAt: DateTime.now(),
       ),
       FeedingSchedule(
-        id: 'default_2',
+        id: (DateTime.now().millisecondsSinceEpoch + 1).toString(),
         name: 'Evening Feeding',
         time: const TimeOfDay(hour: 18, minute: 0),
         amount: 50,
@@ -163,6 +164,21 @@ class FeederProvider with ChangeNotifier {
         createdAt: DateTime.now(),
       ),
     ];
+    
+    final firestore = FirebaseService.firestore!;
+    
+    // Save each default schedule to Firestore
+    for (final schedule in defaultSchedules) {
+      await firestore
+          .collection('users')
+          .doc(userId)
+          .collection('schedules')
+          .doc(schedule.id)
+          .set(schedule.toMap());
+    }
+    
+    _schedules = defaultSchedules;
+    debugPrint('✅ Created default schedules in Firestore for user: $userId');
   }
   
   /// Trigger immediate feeding
