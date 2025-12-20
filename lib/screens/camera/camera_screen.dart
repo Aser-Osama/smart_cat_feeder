@@ -124,17 +124,20 @@ class _CameraScreenState extends State<CameraScreen> {
       // Create video controller
       // Disable hardware acceleration on emulators - they don't support GPU video decoding properly
       // which causes black screen issues. Software rendering works reliably.
+      
+      final bool enableHw = !_isEmulator && !Platform.isLinux; // force SW video on Linux (Wayland/GNOME issue)
+
       _videoController = VideoController(
         _player!,
         configuration: VideoControllerConfiguration(
           // Disable HW acceleration on emulators for software rendering fallback
-          enableHardwareAcceleration: !_isEmulator,
+          enableHardwareAcceleration: enableHw,
           // Use software-based Android Surface Type for emulators
           androidAttachSurfaceAfterVideoParameters: _isEmulator,
         ),
       );
       
-      debugPrint('VideoController initialized - HW accel: ${!_isEmulator}, isEmulator: $_isEmulator');
+      debugPrint('VideoController initialized - HW accel: ${enableHw}, isEmulator: $_isEmulator');
       
       // Listen to player state
       _player!.stream.playing.listen((playing) {
