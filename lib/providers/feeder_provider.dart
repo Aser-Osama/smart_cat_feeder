@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/feeding_log.dart';
@@ -8,6 +9,7 @@ import '../services/notification_service.dart';
 
 /// Provider for feeder state and operations.
 /// Uses Firestore when available, falls back to local storage otherwise.
+/// Phase 3: Integrates with IoT gateway via Firestore commands.
 class FeederProvider with ChangeNotifier {
   bool _isFeeding = false;
   bool _isLoading = false;
@@ -19,6 +21,11 @@ class FeederProvider with ChangeNotifier {
   String? _currentUserId;
   FeedingType? _historyFilter; // null = all, manual, or scheduled
   
+  // IoT status
+  bool _iotConnected = false;
+  DateTime? _lastIoTHeartbeat;
+  StreamSubscription<DocumentSnapshot>? _statusListener;
+  
   bool get isFeeding => _isFeeding;
   bool get isLoading => _isLoading;
   List<FeedingLog> get feedingHistory => _filteredFeedingHistory;
@@ -28,6 +35,10 @@ class FeederProvider with ChangeNotifier {
   double get foodLevel => _foodLevel;
   String? get errorMessage => _errorMessage;
   FeedingType? get historyFilter => _historyFilter;
+  
+  // IoT status getters
+  bool get iotConnected => _iotConnected;
+  DateTime? get lastIoTHeartbeat => _lastIoTHeartbeat;
   
   /// Get filtered feeding history based on current filter
   List<FeedingLog> get _filteredFeedingHistory {
@@ -69,6 +80,10 @@ class FeederProvider with ChangeNotifier {
     _catDetected = false;
     _foodLevel = 75.0;
     _errorMessage = null;
+    _iotConnected = false;
+    _lastIoTHeartbeat = null;
+    _statusListener?.cancel();
+    _statusListener = null;
     notifyListeners();
   }
   
@@ -134,13 +149,14 @@ class FeederProvider with ChangeNotifier {
         await _createDefaultSchedulesInFirestore(userId);
       }
       
-      // Load feeder status
-      final feederDoc = await firestore
+      // Load feeder status and set up real-time listener
+      final statusRef = firestore
           .collection('users')
           .doc(userId)
           .collection('feeder')
-          .doc('status')
-          .get();
+          .doc('status');
+      
+      final feederDoc = await statusRef.get();
       
       if (feederDoc.exists) {
         final data = feederDoc.data()!;
@@ -150,6 +166,10 @@ class FeederProvider with ChangeNotifier {
         // Initialize feeder status in Firestore
         await _updateFeederStatus();
       }
+      
+      // Phase 3: Set up real-time listener for IoT status updates
+      // This listens for cat detection and other status changes from the gateway
+      _setupStatusListener(statusRef);
       
     } catch (e) {
       debugPrint('Error loading from Firestore: $e');
@@ -196,7 +216,9 @@ class FeederProvider with ChangeNotifier {
     debugPrint('✅ Created default schedules in Firestore for user: $userId');
   }
   
-  /// Trigger immediate feeding
+  /// Trigger immediate feeding via IoT gateway
+  /// Phase 3: Sends command to Firestore, which the Orange Pi gateway picks up
+  /// and relays to the ESP8266 via MQTT
   Future<bool> feedNow({double? amount}) async {
     if (_isFeeding) return false;
     
@@ -207,27 +229,53 @@ class FeederProvider with ChangeNotifier {
     final feedAmount = amount ?? PreferencesService.defaultPortionSize;
     
     try {
-      // Simulate feeding process (or send command to IoT device)
-      await Future.delayed(const Duration(seconds: 3));
+      final userId = FirebaseService.currentUserId;
       
-      // Create new log entry
-      final newLog = FeedingLog(
-        id: DateTime.now().millisecondsSinceEpoch.toString(),
-        timestamp: DateTime.now(),
-        amount: feedAmount,
-        type: FeedingType.manual,
-        success: true,
-      );
-      
-      // Save to Firestore if available
-      if (!FirebaseService.isOfflineMode && FirebaseService.currentUserId != null) {
-        await _saveLogToFirestore(newLog);
-        await _updateFeederStatus();
+      if (!FirebaseService.isOfflineMode && userId != null) {
+        // Phase 3: Send command to IoT gateway via Firestore
+        // The Orange Pi gateway listens to this and relays to ESP8266
+        // IMPORTANT: Use add() to create unique documents - gateway listens for ADDED events
+        await FirebaseService.firestore!
+            .collection('users')
+            .doc(userId)
+            .collection('commands')
+            .add({
+              'type': 'feed',
+              'amount': feedAmount,
+              'source': 'manual',
+              'status': 'pending',
+              'createdAt': FieldValue.serverTimestamp(),
+            });
+        
+        debugPrint('📤 IoT feed command sent: ${feedAmount}g');
+        
+        // Wait for IoT response (with timeout)
+        // The gateway will create the feeding_log when complete
+        await Future.delayed(const Duration(seconds: 4));
+        
+        // NOTE: We don't create a feeding log here - the gateway does that
+        // when it receives the 'fed' status from the ESP8266.
+        // This ensures we only log actual successful feedings.
+        
+        // Refresh data to get the new feeding log from Firestore
+        await refreshData();
+        
+      } else {
+        // Offline mode - simulate feeding
+        await Future.delayed(const Duration(seconds: 3));
+        
+        final newLog = FeedingLog(
+          id: DateTime.now().millisecondsSinceEpoch.toString(),
+          timestamp: DateTime.now(),
+          amount: feedAmount,
+          type: FeedingType.manual,
+          success: true,
+        );
+        
+        _feedingHistory.insert(0, newLog);
+        _foodLevel = (_foodLevel - 5).clamp(0, 100);
       }
       
-      // Update local state
-      _feedingHistory.insert(0, newLog);
-      _foodLevel = (_foodLevel - 5).clamp(0, 100);
       _isFeeding = false;
       notifyListeners();
       
@@ -271,6 +319,69 @@ class FeederProvider with ChangeNotifier {
           'catDetected': _catDetected,
           'lastUpdated': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
+  }
+  
+  /// Phase 3: Set up real-time listener for IoT status updates
+  /// This receives updates from the Orange Pi gateway about:
+  /// - Cat detection from ESP8266 sensors
+  /// - Food level changes
+  /// - IoT connectivity status
+  void _setupStatusListener(DocumentReference statusRef) {
+    // Cancel existing listener if any
+    _statusListener?.cancel();
+    
+    _statusListener = statusRef.snapshots().listen(
+      (snapshot) {
+        if (!snapshot.exists) return;
+        
+        final data = snapshot.data() as Map<String, dynamic>?;
+        if (data == null) return;
+        
+        // Update cat detection status
+        final newCatDetected = data['catDetected'] ?? false;
+        if (newCatDetected != _catDetected) {
+          _catDetected = newCatDetected;
+          debugPrint('🐱 Cat detection updated: $_catDetected');
+          
+          // Show notification if cat was just detected
+          if (_catDetected) {
+            NotificationService.showCatDetectedNotification();
+          }
+        }
+        
+        // Update food level
+        final newFoodLevel = (data['foodLevel'] ?? 75.0).toDouble();
+        if (newFoodLevel != _foodLevel) {
+          _foodLevel = newFoodLevel;
+          debugPrint('🍽️ Food level updated: $_foodLevel%');
+        }
+        
+        // Check IoT connectivity - use iotConnected field from gateway, 
+        // with fallback to timestamp check
+        final iotConnectedField = data['iotConnected'] as bool?;
+        final lastUpdated = data['lastUpdated'] as Timestamp?;
+        
+        if (lastUpdated != null) {
+          _lastIoTHeartbeat = lastUpdated.toDate();
+        }
+        
+        if (iotConnectedField != null) {
+          // Trust the gateway's iotConnected field
+          _iotConnected = iotConnectedField;
+        } else if (lastUpdated != null) {
+          // Fallback: Consider IoT connected if last update was within 5 minutes
+          final fiveMinutesAgo = DateTime.now().subtract(const Duration(minutes: 5));
+          _iotConnected = _lastIoTHeartbeat!.isAfter(fiveMinutesAgo);
+        }
+        
+        notifyListeners();
+      },
+      onError: (error) {
+        debugPrint('❌ Error listening to feeder status: $error');
+      },
+    );
+    
+    debugPrint('👂 Real-time IoT status listener started');
   }
   
   // --- Schedule Management ---

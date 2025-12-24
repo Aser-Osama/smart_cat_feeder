@@ -13,7 +13,9 @@ class FeedingLog {
   final FeedingType type;
   final bool success;
   final String? scheduleName; // Name of schedule if type is scheduled
+  final String? scheduleId; // ID of schedule if type is scheduled
   final String? notes; // Optional notes
+  final String? source; // 'manual', 'scheduled', 'iot' - where the feed originated
 
   FeedingLog({
     required this.id,
@@ -22,7 +24,9 @@ class FeedingLog {
     required this.type,
     required this.success,
     this.scheduleName,
+    this.scheduleId,
     this.notes,
+    this.source,
   });
 
   /// Create a copy with updated fields
@@ -33,7 +37,9 @@ class FeedingLog {
     FeedingType? type,
     bool? success,
     String? scheduleName,
+    String? scheduleId,
     String? notes,
+    String? source,
   }) {
     return FeedingLog(
       id: id ?? this.id,
@@ -42,7 +48,9 @@ class FeedingLog {
       type: type ?? this.type,
       success: success ?? this.success,
       scheduleName: scheduleName ?? this.scheduleName,
+      scheduleId: scheduleId ?? this.scheduleId,
       notes: notes ?? this.notes,
+      source: source ?? this.source,
     );
   }
 
@@ -55,7 +63,9 @@ class FeedingLog {
       'type': type == FeedingType.manual ? 'manual' : 'scheduled',
       'success': success,
       'scheduleName': scheduleName,
+      'scheduleId': scheduleId,
       'notes': notes,
+      'source': source,
     };
   }
 
@@ -67,7 +77,9 @@ class FeedingLog {
       'type': type == FeedingType.manual ? 'manual' : 'scheduled',
       'success': success,
       'scheduleName': scheduleName,
+      'scheduleId': scheduleId,
       'notes': notes,
+      'source': source,
     };
   }
 
@@ -82,7 +94,9 @@ class FeedingLog {
       type: map['type'] == 'manual' ? FeedingType.manual : FeedingType.scheduled,
       success: map['success'] ?? true,
       scheduleName: map['scheduleName'],
+      scheduleId: map['scheduleId'],
       notes: map['notes'],
+      source: map['source'],
     );
   }
 
@@ -108,7 +122,9 @@ class FeedingLog {
       type: data['type'] == 'manual' ? FeedingType.manual : FeedingType.scheduled,
       success: data['success'] ?? true,
       scheduleName: data['scheduleName'],
+      scheduleId: data['scheduleId'],
       notes: data['notes'],
+      source: data['source'],
     );
   }
 

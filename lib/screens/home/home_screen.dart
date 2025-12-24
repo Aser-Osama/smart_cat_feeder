@@ -131,7 +131,12 @@ class HomeScreen extends StatelessWidget {
   }
 
   Widget _buildQuickStats(BuildContext context, FeederProvider provider) {
-    return Row(
+    return Column(
+      children: [
+        // IoT Status indicator
+        _buildIoTStatusBanner(context, provider),
+        const SizedBox(height: 15),
+        Row(
       children: [
         Expanded(
           child: _buildStatCard(
@@ -147,6 +152,76 @@ class HomeScreen extends StatelessWidget {
           child: _buildFoodLevelCard(context, provider),
         ),
       ],
+        ),
+      ],
+    );
+  }
+  
+  Widget _buildIoTStatusBanner(BuildContext context, FeederProvider provider) {
+    final isConnected = provider.iotConnected;
+    final lastHeartbeat = provider.lastIoTHeartbeat;
+    
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: isConnected 
+            ? AppTheme.successColor.withOpacity(0.1) 
+            : AppTheme.warningColor.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: isConnected 
+              ? AppTheme.successColor.withOpacity(0.3) 
+              : AppTheme.warningColor.withOpacity(0.3),
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 10,
+            height: 10,
+            decoration: BoxDecoration(
+              color: isConnected ? AppTheme.successColor : AppTheme.warningColor,
+              shape: BoxShape.circle,
+              boxShadow: isConnected ? [
+                BoxShadow(
+                  color: AppTheme.successColor.withOpacity(0.4),
+                  blurRadius: 6,
+                  spreadRadius: 1,
+                ),
+              ] : null,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isConnected ? 'IoT Gateway Connected' : 'IoT Gateway Offline',
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: isConnected ? AppTheme.successColor : AppTheme.warningColor,
+                  ),
+                ),
+                if (lastHeartbeat != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    'Last update: ${_formatTimeDifference(lastHeartbeat)}',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: AppTheme.textSecondary,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          Icon(
+            isConnected ? Icons.sensors : Icons.sensors_off,
+            color: isConnected ? AppTheme.successColor : AppTheme.warningColor,
+            size: 24,
+          ),
+        ],
+      ),
     );
   }
   

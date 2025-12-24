@@ -1,15 +1,18 @@
 /**
  * Smart Cat Feeder - Firebase Cloud Functions (v2)
  *
- * These functions handle scheduled feeding automation:
+ * These functions handle:
  * 1. checkScheduledFeedings - Runs every minute via Cloud Scheduler
  * 2. onScheduleCreated - Sets up notifications when a schedule is created
  * 3. triggerManualFeed - HTTP callable function for IoT device integration
+ * 4. triggerIoTFeed - NEW: Send feed command to IoT gateway via Firestore
+ * 5. onCatDetected - NEW: Handle cat detection from IoT and send notification
+ * 6. sendCatNotification - NEW: Send cat detection push notification
  */
 
 const {onSchedule} = require("firebase-functions/v2/scheduler");
 const {onCall, HttpsError} = require("firebase-functions/v2/https");
-const {onDocumentCreated} = require("firebase-functions/v2/firestore");
+const {onDocumentCreated, onDocumentUpdated} = require("firebase-functions/v2/firestore");
 const {initializeApp} = require("firebase-admin/app");
 const {getFirestore, FieldValue} = require("firebase-admin/firestore");
 const {getMessaging} = require("firebase-admin/messaging");
@@ -17,6 +20,10 @@ const {getMessaging} = require("firebase-admin/messaging");
 initializeApp();
 
 const db = getFirestore();
+
+// ============================================================================
+// Scheduled Feeding Check (runs every minute)
+// ============================================================================
 
 /**
  * Cloud Scheduler Function - Runs every minute
@@ -81,27 +88,31 @@ exports.checkScheduledFeedings = onSchedule({
 
 /**
  * Execute a feeding for a specific user
+ * This now sends a command to the IoT gateway instead of just logging
  */
 async function executeFeedingForUser(userId, schedule, scheduleId) {
   try {
-    const feedingLogRef = db
+    // Send command to IoT gateway via Firestore
+    // The Orange Pi gateway listens to this and relays to ESP8266
+    // IMPORTANT: Use add() to create unique documents - gateway listens for ADDED events
+    await db
         .collection("users")
         .doc(userId)
-        .collection("feeding_logs")
-        .doc();
+        .collection("commands")
+        .add({
+          type: "feed",
+          amount: parseFloat(schedule.amount) || 50.0,
+          source: "scheduled",
+          scheduleName: schedule.name,
+          scheduleId: scheduleId,
+          status: "pending",
+          createdAt: FieldValue.serverTimestamp(),
+        });
 
-    const feedingLog = {
-      timestamp: FieldValue.serverTimestamp(),
-      amount: schedule.amount || 50,
-      type: "scheduled",
-      success: true,
-      scheduleName: schedule.name,
-      scheduleId: scheduleId,
-      notes: `Automated feeding from schedule: ${schedule.name}`,
-    };
+    console.log(`📤 IoT feed command sent for schedule: ${schedule.name}`);
 
-    // Save feeding log
-    await feedingLogRef.set(feedingLog);
+    // NOTE: Feeding log will be created by the Orange Pi gateway when feeding completes
+    // This ensures we only log successful feedings and have accurate timestamps
 
     // Update food level (decrease by ~5% per feeding)
     const feederStatusRef = db
@@ -128,31 +139,34 @@ async function executeFeedingForUser(userId, schedule, scheduleId) {
     // Send push notification to user
     await sendFeedingNotification(userId, schedule);
 
-    // TODO: Send command to IoT device here
-    // await sendIoTCommand(userId, schedule.amount);
-
     console.log(`✅ Feeding executed for ${schedule.name}`);
     return true;
   } catch (error) {
     console.error(`❌ Error executing feeding for user ${userId}:`, error);
 
-    // Log failed feeding
+    // Log failed command (not feeding - the command itself failed to send)
     await db
         .collection("users")
         .doc(userId)
         .collection("feeding_logs")
         .add({
           timestamp: FieldValue.serverTimestamp(),
-          amount: schedule.amount || 50,
+          amount: parseFloat(schedule.amount) || 50.0,
           type: "scheduled",
           success: false,
           scheduleName: schedule.name,
-          notes: `Failed: ${error.message}`,
+          scheduleId: scheduleId,
+          notes: `Command failed: ${error.message}`,
+          source: "cloud_function",
         });
 
     return false;
   }
 }
+
+// ============================================================================
+// Push Notifications
+// ============================================================================
 
 /**
  * Send push notification when feeding is completed
@@ -249,9 +263,13 @@ async function sendLowFoodNotification(userId, level) {
   }
 }
 
+// ============================================================================
+// Manual Feed Functions
+// ============================================================================
+
 /**
  * HTTP Callable function for manual feeding from app
- * Can also be used for IoT device integration
+ * This sends a command to the IoT gateway
  */
 exports.triggerManualFeed = onCall(async (request) => {
   // Verify authentication
@@ -263,47 +281,141 @@ exports.triggerManualFeed = onCall(async (request) => {
   }
 
   const userId = request.auth.uid;
-  const amount = request.data.amount || 50;
+  const amount = parseFloat(request.data.amount) || 50.0;
 
   try {
-    // Log the feeding
+    // Send command to IoT gateway via Firestore
+    // The Orange Pi gateway listens to this collection
+    // IMPORTANT: Use add() to create unique documents - gateway listens for ADDED events
     await db
         .collection("users")
         .doc(userId)
-        .collection("feeding_logs")
+        .collection("commands")
         .add({
-          timestamp: FieldValue.serverTimestamp(),
+          type: "feed",
           amount: amount,
-          type: "manual",
-          success: true,
-          notes: "Manual feeding via Cloud Function",
+          source: "manual",
+          status: "pending",
+          createdAt: FieldValue.serverTimestamp(),
         });
 
-    // Update food level
-    const feederStatusRef = db
-        .collection("users")
-        .doc(userId)
-        .collection("feeder")
-        .doc("status");
+    console.log(`📤 IoT feed command sent for user ${userId}: ${amount}g`);
 
-    const feederDoc = await feederStatusRef.get();
-    if (feederDoc.exists) {
-      const currentLevel = feederDoc.data().foodLevel || 100;
-      await feederStatusRef.update({
-        foodLevel: Math.max(0, currentLevel - 5),
-        lastUpdated: FieldValue.serverTimestamp(),
-      });
-    }
-
-    // TODO: Send command to IoT device
-    // await sendIoTCommand(userId, amount);
-
-    return {success: true, message: "Feeding triggered successfully"};
+    return {
+      success: true,
+      message: "Feed command sent to IoT gateway",
+      amount: amount,
+    };
   } catch (error) {
     console.error("Error triggering manual feed:", error);
     throw new HttpsError("internal", error.message);
   }
 });
+
+/**
+ * Alternative: Direct Firestore write for IoT feed
+ * App can write directly to commands collection, this handles the logging
+ */
+exports.onFeedCommandCreated = onDocumentCreated(
+    "users/{userId}/commands/{commandId}",
+    async (event) => {
+      const command = event.data.data();
+      const userId = event.params.userId;
+
+      if (command.type !== "feed") return;
+
+      console.log(`📥 Feed command received for user ${userId}`);
+
+      // The gateway will handle the actual feeding
+      // This function just logs and tracks the command
+
+      // Optional: Send confirmation notification
+      try {
+        const tokensSnapshot = await db
+            .collection("users")
+            .doc(userId)
+            .collection("fcm_tokens")
+            .get();
+
+        if (!tokensSnapshot.empty) {
+          const tokens = tokensSnapshot.docs.map((doc) => doc.id);
+          const messaging = getMessaging();
+
+          await messaging.sendEachForMulticast({
+            notification: {
+              title: "🔄 Feeding in Progress",
+              body: `Dispensing ${command.amount || 50}g of food...`,
+            },
+            data: {
+              type: "feed_started",
+              amount: String(command.amount || 50),
+            },
+            tokens: tokens,
+          });
+        }
+      } catch (error) {
+        console.error("Error sending feed started notification:", error);
+      }
+    },
+);
+
+// ============================================================================
+// Cat Detection Notification
+// ============================================================================
+
+/**
+ * Listen for cat detection status changes from IoT gateway
+ * When cat is detected, send push notification
+ */
+exports.onCatDetected = onDocumentUpdated(
+    "users/{userId}/feeder/status",
+    async (event) => {
+      const beforeData = event.data.before.data();
+      const afterData = event.data.after.data();
+      const userId = event.params.userId;
+
+      // Check if cat detection changed from false to true
+      const wasCatDetected = beforeData.catDetected || false;
+      const isCatDetected = afterData.catDetected || false;
+
+      if (!wasCatDetected && isCatDetected) {
+        console.log(`🐱 Cat detected for user ${userId}!`);
+
+        try {
+          const tokensSnapshot = await db
+              .collection("users")
+              .doc(userId)
+              .collection("fcm_tokens")
+              .get();
+
+          if (!tokensSnapshot.empty) {
+            const tokens = tokensSnapshot.docs.map((doc) => doc.id);
+            const messaging = getMessaging();
+
+            await messaging.sendEachForMulticast({
+              notification: {
+                title: "🐱 Cat Detected!",
+                body: "Your cat is at the feeder. Tap to view camera.",
+              },
+              data: {
+                type: "cat_detected",
+                timestamp: new Date().toISOString(),
+              },
+              tokens: tokens,
+            });
+
+            console.log(`📱 Cat detection notification sent to user ${userId}`);
+          }
+        } catch (error) {
+          console.error("Error sending cat detection notification:", error);
+        }
+      }
+    },
+);
+
+// ============================================================================
+// Schedule Management
+// ============================================================================
 
 /**
  * Firestore trigger - When a new schedule is created
@@ -351,3 +463,29 @@ exports.onScheduleCreated = onDocumentCreated(
       }
     },
 );
+
+// ============================================================================
+// IoT Gateway Status (Optional)
+// ============================================================================
+
+/**
+ * HTTP endpoint for IoT gateway to report status
+ * Can be called by Orange Pi to confirm it's online
+ */
+exports.gatewayHeartbeat = onCall(async (request) => {
+  // This could be called by the gateway to confirm it's connected
+  // For security, you might want to use a service account or API key
+
+  const gatewayId = request.data.gatewayId || "unknown";
+  const status = request.data.status || {};
+
+  console.log(`💓 Gateway heartbeat from ${gatewayId}:`, status);
+
+  // Optionally store gateway status
+  await db.collection("gateways").doc(gatewayId).set({
+    lastHeartbeat: FieldValue.serverTimestamp(),
+    status: status,
+  }, {merge: true});
+
+  return {success: true, timestamp: new Date().toISOString()};
+});

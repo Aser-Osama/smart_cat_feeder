@@ -1,0 +1,18 @@
+# Smart Cat Feeder - Orange Pi Gateway Dependencies
+# Python 3.8+ required
+
+# MQTT Client
+paho-mqtt>=1.6.0,<2.0
+
+# Firebase Admin SDK
+firebase-admin>=6.0.0
+
+# PyGObject for GStreamer RTSP server
+PyGObject>=3.42.0
+
+# Async support
+asyncio-mqtt>=0.16.0
+
+# Environment variables
+python-dotenv>=1.0.0
+
