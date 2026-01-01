@@ -1,10 +1,16 @@
 import 'package:flutter/material.dart';
-import 'home/home_screen.dart';
-import 'camera/camera_screen.dart';
-import 'history/history_screen.dart';
-import 'schedule/schedule_screen.dart';
+import 'package:provider/provider.dart';
+import '../providers/shelter_provider.dart';
+import 'shelter/dashboard_screen.dart';
+import 'shelter/alerts_screen.dart';
 import 'profile/profile_screen.dart';
 
+/// Main navigation for the Shelter Monitoring System
+/// 
+/// This navigation structure focuses on:
+/// - Dashboard: Overview of all 4 monitoring nodes (W, X, Y, Z)
+/// - Alerts: Empty plate warnings and system alerts
+/// - Settings: User profile and system configuration
 class MainNavigation extends StatefulWidget {
   MainNavigation({super.key}) : super();
   
@@ -17,6 +23,11 @@ class MainNavigation extends StatefulWidget {
   /// Static method to navigate to a tab from anywhere
   static void navigateTo(int index) {
     navigationKey.currentState?.navigateToTab(index);
+  }
+  
+  /// Navigate directly to alerts tab (index 1)
+  static void navigateToAlerts() {
+    navigationKey.currentState?.navigateToTab(1);
   }
 }
 
@@ -33,10 +44,8 @@ class _MainNavigationState extends State<MainNavigation> {
   }
 
   final List<Widget> _screens = [
-    const HomeScreen(),
-    const CameraScreen(),
-    const HistoryScreen(),
-    const ScheduleScreen(),
+    const ShelterDashboardScreen(),
+    const AlertsScreen(),
     const ProfileScreen(),
   ];
 
@@ -57,40 +66,50 @@ class _MainNavigationState extends State<MainNavigation> {
             ),
           ],
         ),
-        child: BottomNavigationBar(
-          currentIndex: _currentIndex,
-          onTap: (index) {
-            setState(() {
-              _currentIndex = index;
-            });
+        child: Consumer<ShelterProvider>(
+          builder: (context, provider, child) {
+            final unacknowledgedCount = provider.alertStats.unacknowledged;
+            
+            return BottomNavigationBar(
+              currentIndex: _currentIndex,
+              onTap: (index) {
+                setState(() {
+                  _currentIndex = index;
+                });
+              },
+              items: [
+                const BottomNavigationBarItem(
+                  icon: Icon(Icons.dashboard_outlined),
+                  activeIcon: Icon(Icons.dashboard),
+                  label: 'Dashboard',
+                ),
+                BottomNavigationBarItem(
+                  icon: Badge(
+                    isLabelVisible: unacknowledgedCount > 0,
+                    label: Text(
+                      unacknowledgedCount > 9 ? '9+' : '$unacknowledgedCount',
+                      style: const TextStyle(fontSize: 10),
+                    ),
+                    child: const Icon(Icons.notifications_outlined),
+                  ),
+                  activeIcon: Badge(
+                    isLabelVisible: unacknowledgedCount > 0,
+                    label: Text(
+                      unacknowledgedCount > 9 ? '9+' : '$unacknowledgedCount',
+                      style: const TextStyle(fontSize: 10),
+                    ),
+                    child: const Icon(Icons.notifications),
+                  ),
+                  label: 'Alerts',
+                ),
+                const BottomNavigationBarItem(
+                  icon: Icon(Icons.settings_outlined),
+                  activeIcon: Icon(Icons.settings),
+                  label: 'Settings',
+                ),
+              ],
+            );
           },
-          items: const [
-            BottomNavigationBarItem(
-              icon: Icon(Icons.home_outlined),
-              activeIcon: Icon(Icons.home),
-              label: 'Home',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.videocam_outlined),
-              activeIcon: Icon(Icons.videocam),
-              label: 'Camera',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.history),
-              activeIcon: Icon(Icons.history),
-              label: 'History',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.schedule_outlined),
-              activeIcon: Icon(Icons.schedule),
-              label: 'Schedule',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.person_outline),
-              activeIcon: Icon(Icons.person),
-              label: 'Profile',
-            ),
-          ],
         ),
       ),
     );

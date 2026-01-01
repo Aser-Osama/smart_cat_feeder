@@ -1,0 +1,352 @@
+W:
+............. OK!
+[WIFI] IP: 172.29.32.149
+[WIFI] Channel: 11 (ESP-NOW will use this too)
+[WIFI] RSSI: -24 dBm
+
+Both ESP-NOW and WiFi are now active!
+ESP-NOW messages will work alongside WiFi.
+
+[TX] No peers yet
+
+========== STATUS ==========
+Node: W | TX: 0 (OK:0 FAIL:0) | RX: 0
+WiFi: CONNECTED to Aser (Ch:11, RSSI:-20)
+  IP: 172.29.32.149
+ESP-NOW Peers:
+  (none)
+============================
+
+[RX] Discovery from peer, sending ACK to 48:55:19:15:48:FD
+[TX] ACK to 48:55:19:15:48:FD OK
+[TX] Discovery broadcast #2
+[TX] Data #3 (85.7) to Node X
+
+========== STATUS ==========
+Node: W | TX: 3 (OK:2 FAIL:0) | RX: 3
+WiFi: CONNECTED to Aser (Ch:11, RSSI:-20)
+  IP: 172.29.32.149
+ESP-NOW Peers:
+  [X] 48:55:19:15:48:FD (seen 0s ago)
+============================
+
+[TX] Data #4 (32.4) to Node X
+
+========== STATUS ==========
+Node: W | TX: 4 (OK:3 FAIL:0) | RX: 3
+WiFi: CONNECTED to Aser (Ch:11, RSSI:-20)
+  IP: 172.29.32.149
+ESP-NOW Peers:
+  [X] 48:55:19:15:48:FD (seen 3s ago)
+============================
+
+[TX] Discovery broadcast #5
+[TX] Data #6 (18.7) to Node X
+
+========== STATUS ==========
+Node: W | TX: 6 (OK:4 FAIL:1) | RX: 4
+WiFi: CONNECTED to Aser (Ch:11, RSSI:-20)
+  IP: 172.29.32.149
+ESP-NOW Peers:
+  [X] 48:55:19:15:48:FD (seen 2s ago)
+============================
+
+[TX] Discovery broadcast #7
+[TX] Data #8 (6.5) to Node X
+
+========== STATUS ==========
+Node: W | TX: 8 (OK:5 FAIL:1) | RX: 5
+WiFi: CONNECTED to Aser (Ch:11, RSSI:-22)
+  IP: 172.29.32.149
+ESP-NOW Peers:
+  [X] 48:55:19:15:48:FD (seen 2s ago)
+============================
+
+[TX] Data #9 (61.6) to Node X
+
+========== STATUS ==========
+Node: W | TX: 9 (OK:7 FAIL:1) | RX: 7
+WiFi: CONNECTED to Aser (Ch:11, RSSI:-21)
+  IP: 172.29.32.149
+ESP-NOW Peers:
+  [X] 48:55:19:15:48:FD (seen 2s ago)
+============================
+
+[TX] Discovery broadcast #10
+[TX] Data #11 (25.5) to Node X
+
+========== STATUS ==========
+Node: W | TX: 11 (OK:8 FAIL:2) | RX: 8
+WiFi: CONNECTED to Aser (Ch:11, RSSI:-22)
+  IP: 172.29.32.149
+ESP-NOW Peers:
+  [X] 48:55:19:15:48:FD (seen 0s ago)
+============================
+
+[TX] Data #12 (72.6) to Node X
+
+========== STATUS ==========
+Node: W | TX: 12 (OK:9 FAIL:2) | RX: 9
+WiFi: CONNECTED to Aser (Ch:11, RSSI:-25)
+  IP: 172.29.32.149
+ESP-NOW Peers:
+  [X] 48:55:19:15:48:FD (seen 3s ago)
+============================
+
+[TX] Discovery broadcast #13
+[TX] Data #14 (67.4) to Node X
+
+========== STATUS ==========
+Node: W | TX: 14 (OK:11 FAIL:2) | RX: 11
+WiFi: CONNECTED to Aser (Ch:11, RSSI:-27)
+  IP: 172.29.32.149
+ESP-NOW Peers:
+  [X] 48:55:19:15:48:FD (seen 2s ago)
+============================
+
+[TX] Discovery broadcast #15
+[TX] Data #16 (8.0) to Node X
+
+========== STATUS ==========
+Node: W | TX: 16 (OK:13 FAIL:2) | RX: 12
+WiFi: CONNECTED to Aser (Ch:11, RSSI:-26)
+  IP: 172.29.32.149
+ESP-NOW Peers:
+  [X] 48:55:19:15:48:FD (seen 2s ago)
+============================
+
+[PEER] Node X timed out (no msg for 5min)
+[TX] Data #17 (90.1) to Node X
+
+========== STATUS ==========
+Node: W | TX: 17 (OK:14 FAIL:2) | RX: 14
+WiFi: CONNECTED to Aser (Ch:11, RSSI:-27)
+  IP: 172.29.32.149
+ESP-NOW Peers:
+  [X] 48:55:19:15:48:FD (seen 3s ago)
+============================
+
+[TX] Discovery broadcast #18
+[TX] Data #19 (42.2) to Node X
+
+========== STATUS ==========
+Node: W | TX: 19 (OK:16 FAIL:2) | RX: 16
+WiFi: CONNECTED to Aser (Ch:11, RSSI:-27)
+  IP: 172.29.32.149
+ESP-NOW Peers:
+  [X] 48:55:19:15:48:FD (seen 1s ago)
+============================
+
+[TX] Data #20 (65.8) to Node X
+
+========== STATUS ==========
+Node: W | TX: 20 (OK:17 FAIL:2) | RX: 17
+WiFi: CONNECTED to Aser (Ch:11, RSSI:-26)
+  IP: 172.29.32.149
+ESP-NOW Peers:
+  [X] 48:55:19:15:48:FD (seen 2s ago)
+============================
+
+[TX] Discovery broadcast #21
+
+X:
+........... OK!
+[WIFI] IP: 172.29.32.16
+[WIFI] Channel: 11 (ESP-NOW will use this too)
+[WIFI] RSSI: -40 dBm
+
+Both ESP-NOW and WiFi are now active!
+ESP-NOW messages will work alongside WiFi.
+
+[TX] No peers yet
+
+========== STATUS ==========
+Node: X | TX: 0 (OK:0 FAIL:0) | RX: 0
+WiFi: CONNECTED to Aser (Ch:11, RSSI:-36)
+  IP: 172.29.32.16
+ESP-NOW Peers:
+  (none)
+============================
+
+[TX] Discovery broadcast #1
+[RX] Discovery from peer, sending ACK to 48:55:19:14:A2:29
+[TX] ACK to 48:55:19:14:A2:29 OK
+[TX] Data #3 (43.2) to Node W
+
+========== STATUS ==========
+Node: X | TX: 3 (OK:2 FAIL:0) | RX: 2
+WiFi: CONNECTED to Aser (Ch:11, RSSI:-37)
+  IP: 172.29.32.16
+ESP-NOW Peers:
+  [W] 48:55:19:14:A2:29 (seen 1s ago)
+============================
+
+[PEER] Node W timed out (no msg for 5min)
+[TX] No peers yet
+
+========== STATUS ==========
+Node: X | TX: 3 (OK:3 FAIL:0) | RX: 3
+WiFi: CONNECTED to Aser (Ch:11, RSSI:-38)
+  IP: 172.29.32.16
+ESP-NOW Peers:
+  (none)
+============================
+
+[TX] Discovery broadcast #4
+[RX] Discovery from peer, sending ACK to 48:55:19:14:A2:29
+[TX] ACK to 48:55:19:14:A2:29 OK
+[TX] Data #6 (84.6) to Node W
+
+========== STATUS ==========
+Node: X | TX: 6 (OK:5 FAIL:0) | RX: 4
+WiFi: CONNECTED to Aser (Ch:11, RSSI:-34)
+  IP: 172.29.32.16
+ESP-NOW Peers:
+  [W] 48:55:19:14:A2:29 (seen 2s ago)
+============================
+
+[TX] Discovery broadcast #7
+[RX] Discovery from peer, sending ACK to 48:55:19:14:A2:29
+[TX] ACK to 48:55:19:14:A2:29 OK
+[TX] Data #9 (73.0) to Node W
+
+========== STATUS ==========
+Node: X | TX: 9 (OK:7 FAIL:0) | RX: 6
+WiFi: CONNECTED to Aser (Ch:11, RSSI:-34)
+  IP: 172.29.32.16
+ESP-NOW Peers:
+  [W] 48:55:19:14:A2:29 (seen 0s ago)
+============================
+
+[PEER] Node W timed out (no msg for 5min)
+[TX] No peers yet
+
+========== STATUS ==========
+Node: X | TX: 9 (OK:9 FAIL:0) | RX: 7
+WiFi: CONNECTED to Aser (Ch:11, RSSI:-34)
+  IP: 172.29.32.16
+ESP-NOW Peers:
+  (none)
+============================
+
+[TX] Discovery broadcast #10
+[RX] Discovery from peer, sending ACK to 48:55:19:14:A2:29
+[TX] ACK to 48:55:19:14:A2:29 OK
+[TX] Data #12 (34.1) to Node W
+
+========== STATUS ==========
+Node: X | TX: 12 (OK:11 FAIL:0) | RX: 8
+WiFi: CONNECTED to Aser (Ch:11, RSSI:-35)
+  IP: 172.29.32.16
+ESP-NOW Peers:
+  [W] 48:55:19:14:A2:29 (seen 1s ago)
+============================
+
+[TX] Data #13 (69.3) to Node W
+
+========== STATUS ==========
+Node: X | TX: 13 (OK:12 FAIL:0) | RX: 9
+WiFi: CONNECTED to Aser (Ch:11, RSSI:-33)
+  IP: 172.29.32.16
+ESP-NOW Peers:
+  [W] 48:55:19:14:A2:29 (seen 3s ago)
+============================
+
+[TX] Discovery broadcast #14
+[RX] Discovery from peer, sending ACK to 48:55:19:14:A2:29
+[TX] ACK to 48:55:19:14:A2:29 OK
+[TX] Data #16 (22.6) to Node W
+
+========== STATUS ==========
+Node: X | TX: 16 (OK:15 FAIL:0) | RX: 11
+WiFi: CONNECTED to Aser (Ch:11, RSSI:-31)
+  IP: 172.29.32.16
+ESP-NOW Peers:
+  [W] 48:55:19:14:A2:29 (seen 2s ago)
+============================
+
+[TX] Discovery broadcast #17
+[RX] Discovery from peer, sending ACK to 48:55:19:14:A2:29
+[TX] ACK to 48:55:19:14:A2:29 OK
+[TX] Data #19 (12.8) to Node W
+
+========== STATUS ==========
+Node: X | TX: 19 (OK:18 FAIL:0) | RX: 14
+WiFi: CONNECTED to Aser (Ch:11, RSSI:-34)
+  IP: 172.29.32.16
+ESP-NOW Peers:
+  [W] 48:55:19:14:A2:29 (seen 0s ago)
+============================
+
+[TX] Data #20 (60.7) to Node W
+
+========== STATUS ==========
+Node: X | TX: 20 (OK:19 FAIL:0) | RX: 14
+WiFi: CONNECTED to Aser (Ch:11, RSSI:-34)
+  IP: 172.29.32.16
+ESP-NOW Peers:
+  [W] 48:55:19:14:A2:29 (seen 3s ago)
+============================
+
+[TX] Discovery broadcast #21
+[RX] Discovery from peer, sending ACK to 48:55:19:14:A2:29
+[TX] ACK to 48:55:19:14:A2:29 OK
+[TX] Data #23 (63.6) to Node W
+
+========== STATUS ==========
+Node: X | TX: 23 (OK:22 FAIL:0) | RX: 16
+WiFi: CONNECTED to Aser (Ch:11, RSSI:-35)
+  IP: 172.29.32.16
+ESP-NOW Peers:
+  [W] 48:55:19:14:A2:29 (seen 1s ago)
+============================
+
+[TX] Data #24 (1.5) to Node W
+
+========== STATUS ==========
+Node: X | TX: 24 (OK:23 FAIL:0) | RX: 17
+WiFi: CONNECTED to Aser (Ch:11, RSSI:-34)
+  IP: 172.29.32.16
+ESP-NOW Peers:
+  [W] 48:55:19:14:A2:29 (seen 3s ago)
+============================
+
+[TX] Discovery broadcast #25
+[RX] Discovery from peer, sending ACK to 48:55:19:14:A2:29
+[TX] ACK to 48:55:19:14:A2:29 OK
+[TX] Data #27 (46.3) to Node W
+
+========== STATUS ==========
+Node: X | TX: 27 (OK:26 FAIL:0) | RX: 19
+WiFi: CONNECTED to Aser (Ch:11, RSSI:-33)
+  IP: 172.29.32.16
+ESP-NOW Peers:
+  [W] 48:55:19:14:A2:29 (seen 2s ago)
+============================
+
+[TX] Discovery broadcast #28
+[RX] Discovery from peer, sending ACK to 48:55:19:14:A2:29
+[TX] ACK to 48:55:19:14:A2:29 OK
+[TX] Data #30 (77.3) to Node W
+
+========== STATUS ==========
+Node: X | TX: 30 (OK:29 FAIL:0) | RX: 22
+WiFi: CONNECTED to Aser (Ch:11, RSSI:-37)
+  IP: 172.29.32.16
+ESP-NOW Peers:
+  [W] 48:55:19:14:A2:29 (seen 0s ago)
+============================
+
+[TX] Data #31 (48.6) to Node W
+
+========== STATUS ==========
+Node: X | TX: 31 (OK:30 FAIL:0) | RX: 22
+WiFi: CONNECTED to Aser (Ch:11, RSSI:-34)
+  IP: 172.29.32.16
+ESP-NOW Peers:
+  [W] 48:55:19:14:A2:29 (seen 3s ago)
+============================
+
+[TX] Discovery broadcast #32
+[RX] Discovery from peer, sending ACK to 48:55:19:14:A2:29
+[TX] ACK to 48:55:19:14:A2:29 OK

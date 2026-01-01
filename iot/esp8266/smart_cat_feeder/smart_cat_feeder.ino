@@ -30,11 +30,13 @@
 // ============================================================================
 
  // WiFi credentials
- const char* WIFI_SSID     = "OB_2.4GHz";
- const char* WIFI_PASSWORD = "Barawy_110624";
+ const char* WIFI_SSID     = "Aser";
+ const char* WIFI_PASSWORD = "1234567899abc";
  
  // MQTT Broker (Orange Pi IP address)
- const char* MQTT_BROKER     = "192.168.100.135";  // UPDATE to your Orange Pi IP
+ // const char* MQTT_BROKER     = "192.168.100.135"; 
+ const char* MQTT_BROKER     = "172.29.32.150 ";  // UPDATE to your Orange Pi IP
+
  const int   MQTT_PORT       = 1883;
  const char* MQTT_CLIENT_ID  = "esp8266-feeder";
 

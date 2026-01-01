@@ -5,6 +5,7 @@ import 'package:media_kit/media_kit.dart';
 import 'config/theme.dart';
 import 'providers/auth_provider.dart';
 import 'providers/feeder_provider.dart';
+import 'providers/shelter_provider.dart';
 import 'screens/splash_screen.dart';
 import 'services/firebase_service.dart';
 import 'services/preferences_service.dart';
@@ -40,6 +41,7 @@ class MyApp extends StatefulWidget {
 class _MyAppState extends State<MyApp> {
   late final AuthProvider _authProvider;
   late final FeederProvider _feederProvider;
+  late final ShelterProvider _shelterProvider;
   
   @override
   void initState() {
@@ -48,10 +50,12 @@ class _MyAppState extends State<MyApp> {
     // Create providers
     _authProvider = AuthProvider();
     _feederProvider = FeederProvider();
+    _shelterProvider = ShelterProvider();
     
     // Connect auth changes to feeder provider
     _authProvider.setAuthStateCallback((userId) {
       _feederProvider.onUserChanged(userId);
+      _shelterProvider.onUserChanged(userId);
     });
   }
   
@@ -59,6 +63,7 @@ class _MyAppState extends State<MyApp> {
   void dispose() {
     _authProvider.dispose();
     _feederProvider.dispose();
+    _shelterProvider.dispose();
     super.dispose();
   }
 
@@ -68,9 +73,10 @@ class _MyAppState extends State<MyApp> {
       providers: [
         ChangeNotifierProvider.value(value: _authProvider),
         ChangeNotifierProvider.value(value: _feederProvider),
+        ChangeNotifierProvider.value(value: _shelterProvider),
       ],
       child: MaterialApp(
-        title: 'Smart Cat Feeder',
+        title: 'Shelter Monitor',
         debugShowCheckedModeBanner: false,
         theme: AppTheme.lightTheme,
         home: const SplashScreen(),
