@@ -37,14 +37,23 @@ iot/
 ├── README.md                    # This file
 ├── orangepi/
 │   ├── setup.sh                 # Orange Pi setup script
-│   ├── gateway.py               # Python Firebase ↔ MQTT gateway
-│   ├── gateway.service          # Systemd service file
+│   ├── deploy.sh                # Deploy shelter_gateway to Orange Pi
+│   ├── shelter_gateway.py       # Current: Shelter monitoring gateway (Firebase ↔ MQTT)
 │   └── requirements.txt         # Python dependencies
 ├── esp8266/
-│   └── smart_cat_feeder/
-│       └── smart_cat_feeder.ino # Arduino sketch for ESP8266
-└── firebase/
-    └── index.js                 # Updated Cloud Functions
+│   ├── smart_cat_feeder/        # Cat feeder node code
+│   └── shelter_node/            # Shelter monitoring node code
+└── examples/                    # Test code and older implementations
+    ├── README.md                # Documentation for examples
+    ├── esp8266/
+    │   └── espnow_test/         # ESP-NOW testing code
+    └── orangepi/
+        ├── gateway/             # Old cat feeder gateway (deprecated)
+        ├── rtsp/                # RTSP streaming examples
+        ├── tools/               # Demo utilities
+        └── start_rtsp_stream.sh # RTSP demo script
+
+Documentation: See ../../../docs/ for all setup guides and reports
 ```
 
 ## Quick Start

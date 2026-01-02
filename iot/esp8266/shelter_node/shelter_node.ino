@@ -407,7 +407,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
            strstr(topic, "/config/calibration") != nullptr) {
     // Extract target node ID from topic: shelter/node/X/config/calibration
     char targetNode = topic[strlen(TOPIC_TELEMETRY_PREFIX)];
-    if (targetNode != nodeId && (targetNode == 'W' || targetNode == 'X' || targetNode == 'Y' || targetNode == 'Z')) {
+    if (targetNode != NODE_ID && (targetNode == 'W' || targetNode == 'X' || targetNode == 'Y' || targetNode == 'Z')) {
       LOGF("[MQTT-RX] Calibration for Node %c - forwarding via ESP-NOW\n", targetNode);
       sendConfigViaESPNow(targetNode, message);
     }
@@ -961,7 +961,7 @@ void loop() {
     LOG_CRITICAL("[FWD] Data from Node %c (type:%d)\n", msg->originNode, msg->type);
     
     // If this message is addressed to us (not for forwarding), process it locally
-    if (msg->destNode == nodeId) {
+    if (msg->destNode == NODE_ID) {
       if (msg->type == MSG_TYPE_CONFIG) {
         // Config message for this node - extract and apply calibration
         char payloadBuf[160];

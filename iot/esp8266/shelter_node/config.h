@@ -12,7 +12,7 @@
 // ============================================================================
 // NODE IDENTITY - CHANGE THIS FOR EACH NODE
 // ============================================================================
-#define NODE_ID 'Y'  // Change to 'W', 'X', 'Y', or 'Z' for other nodes
+#define NODE_ID 'X'  // Change to 'W', 'X', 'Y', or 'Z' for other nodes
 
 // ============================================================================
 // MULTI-HOP DEMO MODE
