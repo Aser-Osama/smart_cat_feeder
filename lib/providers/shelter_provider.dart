@@ -62,9 +62,14 @@ class ShelterProvider with ChangeNotifier {
   
   /// Called when user authentication state changes
   Future<void> onUserChanged(String? userId) async {
-    if (_currentUserId == userId) return;
+    debugPrint('🔄 ShelterProvider.onUserChanged called with userId: $userId');
+    if (_currentUserId == userId) {
+      debugPrint('   → Same user, skipping');
+      return;
+    }
     
     _currentUserId = userId;
+    debugPrint('   → New user, loading data...');
     
     if (userId == null) {
       _clearData();
@@ -191,13 +196,20 @@ class ShelterProvider with ChangeNotifier {
   Future<void> _loadFromFirestore() async {
     try {
       final userId = FirebaseService.currentUserId;
+      debugPrint('📡 _loadFromFirestore: userId=$userId, offlineMode=${FirebaseService.isOfflineMode}');
       if (userId == null) {
+        debugPrint('   → No userId, falling back to demo mode');
         _initializeDemoMode();
         return;
       }
       
       _currentUserId = userId;
       final firestore = FirebaseService.firestore!;
+      
+      // DEBUG: Print user ID to help verify it matches the ESP's hardcoded USER_ID
+      debugPrint('🔑 Setting up Firestore listeners for user: $userId');
+      debugPrint('   → ESP hardcoded USER_ID should be: EyrwFFoBJ8TlVFepJvqdeooOBwA2');
+      debugPrint('   → UIDs match: ${userId == "EyrwFFoBJ8TlVFepJvqdeooOBwA2"}');
       
       // Set up listeners for each node
       for (final nodeId in nodeIds) {

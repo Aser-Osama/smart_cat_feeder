@@ -45,18 +45,15 @@ uint32_t failCount = 0;
 // CALLBACK - Called when data is sent
 // ============================================================================
 void onDataSent(uint8_t *mac_addr, uint8_t sendStatus) {
-  Serial.print("📤 Message #");
-  Serial.print(outgoingMessage.messageId);
-  
   if (sendStatus == 0) {
-    Serial.println(" → ✅ DELIVERED");
+    Serial.printf("\n[TX] Message #%u -> DELIVERED\n", outgoingMessage.messageId);
     successCount++;
   } else {
-    Serial.println(" → ❌ FAILED");
+    Serial.printf("\n[TX] Message #%u -> FAILED\n", outgoingMessage.messageId);
     failCount++;
   }
   
-  Serial.printf("   Stats: %u sent, %u delivered, %u failed (%.1f%% success)\n",
+  Serial.printf("     Stats: %u sent, %u delivered, %u failed (%.1f%% success)\n",
                 messageCounter, successCount, failCount,
                 messageCounter > 0 ? (100.0 * successCount / messageCounter) : 0);
 }
@@ -68,23 +65,24 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
   
-  Serial.println("\n\n");
-  Serial.println("╔══════════════════════════════════════════════════════╗");
-  Serial.println("║          ESP-NOW TEST - SENDER                       ║");
-  Serial.println("╚══════════════════════════════════════════════════════╝");
+  Serial.println();
+  Serial.println();
+  Serial.println("========================================================");
+  Serial.println("          ESP-NOW TEST - SENDER");
+  Serial.println("========================================================");
   
   // Print this device's MAC address
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
-  Serial.print("📍 This SENDER's MAC: ");
+  Serial.print("[INFO] This SENDER's MAC: ");
   Serial.println(WiFi.macAddress());
   
   // Initialize ESP-NOW
   if (esp_now_init() != 0) {
-    Serial.println("❌ ESP-NOW init failed!");
+    Serial.println("[ERROR] ESP-NOW init failed!");
     return;
   }
-  Serial.println("✅ ESP-NOW initialized");
+  Serial.println("[OK] ESP-NOW initialized");
   
   // Set role and callback
   esp_now_set_self_role(ESP_NOW_ROLE_CONTROLLER);
@@ -93,8 +91,10 @@ void setup() {
   // Add peer (receiver)
   esp_now_add_peer(RECEIVER_MAC, ESP_NOW_ROLE_SLAVE, 1, NULL, 0);
   
-  Serial.println("\n🚀 Starting transmission in 3 seconds...");
-  Serial.println("   Watch the RECEIVER's serial monitor for incoming messages!\n");
+  Serial.println();
+  Serial.println("[INFO] Starting transmission in 3 seconds...");
+  Serial.println("       Watch the RECEIVER's serial monitor for incoming messages!");
+  Serial.println();
   delay(3000);
 }
 
@@ -109,9 +109,9 @@ void loop() {
   outgoingMessage.sensorValue = random(0, 1000) / 10.0;  // Fake sensor: 0.0 - 100.0
   outgoingMessage.timestamp = millis();
   
-  Serial.println("─────────────────────────────────────────────────");
-  Serial.printf("📦 Sending message #%u\n", messageCounter);
-  Serial.printf("   Node: %s, Value: %.1f, Time: %u ms\n",
+  Serial.println("-------------------------------------------------");
+  Serial.printf("[TX] Sending message #%u\n", messageCounter);
+  Serial.printf("     Node: %s, Value: %.1f, Time: %u ms\n",
                 outgoingMessage.senderNode,
                 outgoingMessage.sensorValue,
                 outgoingMessage.timestamp);

@@ -135,16 +135,17 @@ void onRecv(uint8_t *mac, uint8_t *data, uint8_t len) {
   uint8_t myChannel = getActualChannel();
   
   // *** CHANNEL VERIFICATION - THIS IS THE KEY TEST! ***
-  Serial.println("\n╔══════════════════════════════════════════════════════╗");
-  Serial.printf("║ 📡 RECEIVED from Node %c                              ║\n", msg->nodeId);
-  Serial.printf("║   Their channel: %2d                                  ║\n", msg->channel);
-  Serial.printf("║   My channel:    %2d                                  ║\n", myChannel);
+  Serial.println();
+  Serial.println("========================================================");
+  Serial.printf("[RX] RECEIVED from Node %c\n", msg->nodeId);
+  Serial.printf("     Their channel: %2d\n", msg->channel);
+  Serial.printf("     My channel:    %2d\n", myChannel);
   if (msg->channel == myChannel) {
-    Serial.println("║   ✅ CHANNELS MATCH - ESP-NOW WORKING!               ║");
+    Serial.println("     [OK] CHANNELS MATCH - ESP-NOW WORKING!");
   } else {
-    Serial.println("║   ⚠️  CHANNEL MISMATCH (but msg received?!)          ║");
+    Serial.println("     [WARN] CHANNEL MISMATCH (but msg received?!)");
   }
-  Serial.println("╚══════════════════════════════════════════════════════╝");
+  Serial.println("========================================================");
   
   addOrUpdatePeer(mac, msg->nodeId, msg->channel);
   
@@ -225,16 +226,17 @@ void sendData() {
 void printStatus() {
   uint8_t ch = getActualChannel();
   
-  Serial.println("\n╔══════════════════════════════════════════════════════╗");
-  Serial.println("║              FIXED CHANNEL TEST STATUS               ║");
-  Serial.println("╠══════════════════════════════════════════════════════╣");
-  Serial.printf("║ Node: %c | Channel: %2d (%s)               ║\n", 
+  Serial.println();
+  Serial.println("========================================================");
+  Serial.println("              FIXED CHANNEL TEST STATUS");
+  Serial.println("--------------------------------------------------------");
+  Serial.printf("Node: %c | Channel: %2d (%s)\n", 
     NODE_ID, ch, wifiConnected ? "WiFi" : "FIXED");
-  Serial.printf("║ WiFi: %-12s                                ║\n",
+  Serial.printf("WiFi: %-12s\n",
     wifiConnected ? "CONNECTED" : "DISABLED");
-  Serial.printf("║ TX: %4u (OK:%4u FAIL:%4u) | RX: %4u              ║\n", 
+  Serial.printf("TX: %4u (OK:%4u FAIL:%4u) | RX: %4u\n", 
     txCount, txOk, txFail, rxCount);
-  Serial.println("╠══════════════════════════════════════════════════════╣");
+  Serial.println("--------------------------------------------------------");
   
   int peerCount = 0;
   for (int i = 0; i < MAX_PEERS; i++) {
@@ -242,18 +244,19 @@ void printStatus() {
   }
   
   if (peerCount == 0) {
-    Serial.println("║ Peers: (none discovered yet)                         ║");
+    Serial.println("Peers: (none discovered yet)");
   } else {
-    Serial.println("║ Peers:                                               ║");
+    Serial.println("Peers:");
     for (int i = 0; i < MAX_PEERS; i++) {
       if (peers[i].active) {
-        Serial.printf("║   [%c] ch:%2d ", peers[i].nodeId, peers[i].channel);
+        Serial.printf("  [%c] ch:%2d ", peers[i].nodeId, peers[i].channel);
         printMac(peers[i].mac);
-        Serial.printf(" (%lus ago)    ║\n", (millis() - peers[i].lastSeen) / 1000);
+        Serial.printf(" (%lus ago)\n", (millis() - peers[i].lastSeen) / 1000);
       }
     }
   }
-  Serial.println("╚══════════════════════════════════════════════════════╝\n");
+  Serial.println("========================================================");
+  Serial.println();
 }
 
 // ============================================================================
@@ -263,10 +266,11 @@ void setup() {
   Serial.begin(115200);
   delay(500);
   
-  Serial.println("\n\n");
-  Serial.println("╔══════════════════════════════════════════════════════╗");
-  Serial.println("║        ESP-NOW FIXED CHANNEL TEST                    ║");
-  Serial.println("╚══════════════════════════════════════════════════════╝");
+  Serial.println();
+  Serial.println();
+  Serial.println("========================================================");
+  Serial.println("        ESP-NOW FIXED CHANNEL TEST");
+  Serial.println("========================================================");
   Serial.printf("Node ID: %c\n", NODE_ID);
   Serial.printf("Fixed Channel: %d\n", FIXED_CHANNEL);
   Serial.printf("WiFi Mode: %s\n", WIFI_MODE ? "ENABLED" : "DISABLED");
@@ -313,7 +317,8 @@ void setup() {
       
       // Verify channel matches expected
       if (currentChannel != FIXED_CHANNEL) {
-        Serial.println("\n⚠️  WARNING: WiFi channel differs from FIXED_CHANNEL!");
+        Serial.println();
+        Serial.println("[WARN] WiFi channel differs from FIXED_CHANNEL!");
         Serial.printf("   WiFi is on channel %d, FIXED_CHANNEL is %d\n", currentChannel, FIXED_CHANNEL);
         Serial.println("   Nodes without WiFi won't be able to communicate!");
         Serial.println("   Consider changing your router's channel or FIXED_CHANNEL.\n");
@@ -356,7 +361,8 @@ void setup() {
     Serial.println("Failed to add broadcast peer!");
   }
   
-  Serial.println("\n✅ ESP-NOW initialized!");
+  Serial.println();
+  Serial.println("[OK] ESP-NOW initialized!");
   Serial.println("Waiting for peers...\n");
   
   pinMode(LED_BUILTIN, OUTPUT);

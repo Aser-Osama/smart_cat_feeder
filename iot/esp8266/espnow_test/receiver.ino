@@ -50,24 +50,25 @@ void onDataReceived(uint8_t *mac, uint8_t *data, uint8_t len) {
   }
   lastMessageId = incomingMessage.messageId;
   
-  // Print received message
-  Serial.println("═══════════════════════════════════════════════════════");
-  Serial.printf("📨 RECEIVED MESSAGE #%u\n", incomingMessage.messageId);
-  Serial.println("═══════════════════════════════════════════════════════");
+  // Print received message (start with newline for async safety)
+  Serial.println();
+  Serial.println("=========================================================");
+  Serial.printf("[RX] RECEIVED MESSAGE #%u\n", incomingMessage.messageId);
+  Serial.println("=========================================================");
   
   // Sender MAC
-  Serial.printf("   From MAC: %02X:%02X:%02X:%02X:%02X:%02X\n",
+  Serial.printf("     From MAC: %02X:%02X:%02X:%02X:%02X:%02X\n",
                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   
   // Message contents
-  Serial.printf("   Node ID:     %s\n", incomingMessage.senderNode);
-  Serial.printf("   Sensor Val:  %.1f\n", incomingMessage.sensorValue);
-  Serial.printf("   Sender Time: %u ms\n", incomingMessage.timestamp);
-  Serial.printf("   Data Size:   %u bytes\n", len);
+  Serial.printf("     Node ID:     %s\n", incomingMessage.senderNode);
+  Serial.printf("     Sensor Val:  %.1f\n", incomingMessage.sensorValue);
+  Serial.printf("     Sender Time: %u ms\n", incomingMessage.timestamp);
+  Serial.printf("     Data Size:   %u bytes\n", len);
   
   // Stats
-  Serial.println("───────────────────────────────────────────────────────");
-  Serial.printf("📊 Stats: %u received, %u missed (%.1f%% success)\n",
+  Serial.println("---------------------------------------------------------");
+  Serial.printf("[STATS] %u received, %u missed (%.1f%% success)\n",
                 receivedCount, missedMessages,
                 (receivedCount + missedMessages) > 0 
                   ? (100.0 * receivedCount / (receivedCount + missedMessages)) 
@@ -89,46 +90,51 @@ void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, HIGH);  // OFF
   
-  Serial.println("\n\n");
-  Serial.println("╔══════════════════════════════════════════════════════╗");
-  Serial.println("║          ESP-NOW TEST - RECEIVER                     ║");
-  Serial.println("╚══════════════════════════════════════════════════════╝");
+  Serial.println();
+  Serial.println();
+  Serial.println("========================================================");
+  Serial.println("          ESP-NOW TEST - RECEIVER");
+  Serial.println("========================================================");
   
   // Print this device's MAC address - COPY THIS TO SENDER!
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
   
-  Serial.println("\n┌────────────────────────────────────────────────────┐");
-  Serial.println("│  ⚠️  COPY THIS MAC ADDRESS TO SENDER SKETCH:       │");
-  Serial.println("├────────────────────────────────────────────────────┤");
-  Serial.print("│    ");
+  Serial.println();
+  Serial.println("+----------------------------------------------------+");
+  Serial.println("|  COPY THIS MAC ADDRESS TO SENDER SKETCH:           |");
+  Serial.println("+----------------------------------------------------+");
+  Serial.print("|    ");
   Serial.print(WiFi.macAddress());
-  Serial.println("                        │");
-  Serial.println("│                                                    │");
-  Serial.println("│  In sender.ino, update RECEIVER_MAC like:          │");
+  Serial.println("                        |");
+  Serial.println("|                                                    |");
+  Serial.println("|  In sender.ino, update RECEIVER_MAC like:          |");
   
   // Print in C array format
   uint8_t mac[6];
   WiFi.macAddress(mac);
-  Serial.printf("│  uint8_t RECEIVER_MAC[] = {0x%02X, 0x%02X, 0x%02X, │\n", 
+  Serial.printf("|  uint8_t RECEIVER_MAC[] = {0x%02X, 0x%02X, 0x%02X, |\n", 
                 mac[0], mac[1], mac[2]);
-  Serial.printf("│                            0x%02X, 0x%02X, 0x%02X}; │\n",
+  Serial.printf("|                            0x%02X, 0x%02X, 0x%02X}; |\n",
                 mac[3], mac[4], mac[5]);
-  Serial.println("└────────────────────────────────────────────────────┘\n");
+  Serial.println("+----------------------------------------------------+");
+  Serial.println();
   
   // Initialize ESP-NOW
   if (esp_now_init() != 0) {
-    Serial.println("❌ ESP-NOW init failed!");
+    Serial.println("[ERROR] ESP-NOW init failed!");
     return;
   }
-  Serial.println("✅ ESP-NOW initialized");
+  Serial.println("[OK] ESP-NOW initialized");
   
   // Set role and callback
   esp_now_set_self_role(ESP_NOW_ROLE_SLAVE);
   esp_now_register_recv_cb(onDataReceived);
   
-  Serial.println("\n👂 Listening for ESP-NOW messages...");
-  Serial.println("   LED will blink on each received message.\n");
+  Serial.println();
+  Serial.println("[INFO] Listening for ESP-NOW messages...");
+  Serial.println("       LED will blink on each received message.");
+  Serial.println();
 }
 
 // ============================================================================

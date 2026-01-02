@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -56,6 +57,17 @@ class _MyAppState extends State<MyApp> {
     _authProvider.setAuthStateCallback((userId) {
       _feederProvider.onUserChanged(userId);
       _shelterProvider.onUserChanged(userId);
+    });
+    
+    // Explicitly trigger initial auth state notification after callback is set
+    // This handles the race condition where _checkAuthState() might complete
+    // before the callback is registered
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_authProvider.userId != null) {
+        debugPrint('🚀 Post-frame: Triggering initial auth state for userId: ${_authProvider.userId}');
+        _feederProvider.onUserChanged(_authProvider.userId);
+        _shelterProvider.onUserChanged(_authProvider.userId);
+      }
     });
   }
   

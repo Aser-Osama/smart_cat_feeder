@@ -163,8 +163,10 @@ class ShelterMonitoringGateway:
         topic = msg.topic
         try:
             payload = json.loads(msg.payload.decode())
-        except json.JSONDecodeError:
-            payload = {"raw": msg.payload.decode()}
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            # Binary ESP-NOW data or malformed JSON - skip
+            logger.debug(f"Skipping non-JSON message on {topic}: {e}")
+            return
         
         logger.debug(f"📨 MQTT [{topic}]: {json.dumps(payload)[:200]}")
         
@@ -183,12 +185,47 @@ class ShelterMonitoringGateway:
     # ========================================================================
     
     def _handle_telemetry(self, payload):
-        """Handle sensor telemetry from a node"""
+        """Handle sensor telemetry from a node (supports both full and compact formats)"""
+        
+        # Check if this is compact format (forwarded via ESP-NOW)
+        # Compact format uses short keys: n, u, d, c, r, p, b, s, h
+        if 'n' in payload and 'nodeId' not in payload:
+            # Expand compact format to full format
+            plate_map = {'e': 'empty', 'f': 'filled', 'u': 'unknown'}
+            payload = {
+                'nodeId': payload.get('n', '?'),
+                'userId': payload.get('u', 'EyrwFFoBJ8TlVFepJvqdeooOBwA2'),
+                'sensors': {
+                    'ultrasonic': {
+                        'distanceCm': payload.get('d', 0),
+                        'catPresent': payload.get('c', 0) == 1
+                    },
+                    'color': {
+                        'red': payload.get('r', 0),
+                        'green': 0,
+                        'blue': 0,
+                        'plateStatus': plate_map.get(payload.get('p', 'u'), 'unknown'),
+                        'isBrown': payload.get('p') == 'f'
+                    }
+                },
+                'battery': {
+                    'percentage': payload.get('b', 0),
+                    'voltage': 0
+                },
+                'network': {
+                    'rssi': payload.get('s', -100),
+                    'hopCount': payload.get('h', 1),
+                    'route': [payload.get('n', '?'), 'SINK'],  # Simplified route for forwarded
+                    'nextHop': 'via-relay'
+                }
+            }
+            logger.info(f"📡 Expanded compact telemetry from Node {payload['nodeId']}")
+        
         node_id = payload.get("nodeId", "?")
-        user_id = payload.get("userId")
+        user_id = payload.get("userId", "EyrwFFoBJ8TlVFepJvqdeooOBwA2")  # Default user ID
         timestamp = payload.get("timestamp", 0)
         
-        logger.info(f"📊 Telemetry from Node {node_id}")
+        logger.info(f"📊 Telemetry from Node {node_id} (userId: {user_id})")
         
         # Extract sensor data
         sensors = payload.get("sensors", {})
@@ -237,7 +274,7 @@ class ShelterMonitoringGateway:
                     'ultrasonicDistanceCm': ultrasonic.get('distanceCm', 0)
                 }, merge=True)
                 
-                logger.debug(f"✅ Node {node_id} status updated in Firestore")
+                logger.info(f"✅ Node {node_id} status updated in Firestore for user {user_id}")
                 
             except Exception as e:
                 logger.error(f"❌ Firestore update failed: {e}")

@@ -96,7 +96,8 @@ int currentFeedAmount = 50;
 
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n\n");
+  Serial.println();
+  Serial.println();
   Serial.println("=======================================");
   Serial.println("Smart Cat Feeder - ESP8266 Node");
   Serial.println("=======================================");
@@ -120,12 +121,12 @@ void setup() {
   // Connect to MQTT
   connectMQTT();
   
-  Serial.println("✅ Setup complete!");
+  Serial.println("[OK] Setup complete!");
   Serial.println("Press the button to simulate cat detection");
-  Serial.println("");
+  Serial.println();
   
   // Blink LED 5 times to confirm setup is complete (visual test)
-  Serial.println("💡 Blinking LED 5 times to confirm...");
+  Serial.println("[INFO] Blinking LED 5 times to confirm...");
   for (int i = 0; i < 5; i++) {
     digitalWrite(LED_BUILTIN_PIN, LOW);   // ON (active LOW)
     digitalWrite(LED_ACTUATOR_PIN, HIGH); // ON
@@ -134,7 +135,7 @@ void setup() {
     digitalWrite(LED_ACTUATOR_PIN, LOW);  // OFF
     delay(200);
   }
-  Serial.println("💡 LED test complete. If you didn't see blinking, check your LED/pin.");
+  Serial.println("[INFO] LED test complete. If you didn't see blinking, check your LED/pin.");
 }
 
 // ============================================================================
@@ -142,7 +143,7 @@ void setup() {
 // ============================================================================
 
 void setupWiFi() {
-  Serial.print("📡 Connecting to WiFi: ");
+  Serial.print("[WIFI] Connecting to: ");
   Serial.println(WIFI_SSID);
   
   WiFi.mode(WIFI_STA);
@@ -157,12 +158,14 @@ void setupWiFi() {
   }
   
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\n✅ WiFi connected!");
-    Serial.print("   IP address: ");
+    Serial.println();
+    Serial.println("[OK] WiFi connected!");
+    Serial.print("     IP address: ");
     Serial.println(WiFi.localIP());
     digitalWrite(LED_BUILTIN_PIN, HIGH);  // Turn off LED
   } else {
-    Serial.println("\n❌ WiFi connection failed!");
+    Serial.println();
+    Serial.println("[ERROR] WiFi connection failed!");
     // In production, you might want to enter a config portal here
   }
 }
@@ -173,23 +176,23 @@ void setupWiFi() {
 
 void connectMQTT() {
   while (!mqttClient.connected()) {
-    Serial.print("🔌 Connecting to MQTT broker: ");
+    Serial.print("[MQTT] Connecting to broker: ");
     Serial.print(MQTT_BROKER);
     Serial.print("...");
     
     if (mqttClient.connect(MQTT_CLIENT_ID)) {
-      Serial.println(" ✅ connected!");
+      Serial.println(" OK!");
       
       // Subscribe to control topics
       mqttClient.subscribe(TOPIC_FEED_COMMAND);
-      Serial.print("   Subscribed to: ");
+      Serial.print("       Subscribed to: ");
       Serial.println(TOPIC_FEED_COMMAND);
       
       // Send initial heartbeat
       sendHeartbeat();
       
     } else {
-      Serial.print(" ❌ failed, rc=");
+      Serial.print(" FAILED, rc=");
       Serial.print(mqttClient.state());
       Serial.println(" - retrying in 5 seconds");
       delay(5000);
@@ -207,8 +210,8 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   memcpy(message, payload, length);
   message[length] = '\0';
   
-  Serial.println("");
-  Serial.print("📨 MQTT received [");
+  Serial.println();
+  Serial.print("[MQTT-RX] [");
   Serial.print(topic);
   Serial.print("]: ");
   Serial.println(message);
@@ -218,7 +221,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   DeserializationError error = deserializeJson(doc, message);
   
   if (error) {
-    Serial.print("❌ JSON parse error: ");
+    Serial.print("[ERROR] JSON parse error: ");
     Serial.println(error.c_str());
     return;
   }
@@ -238,7 +241,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
       currentScheduleId = doc["scheduleId"] | "";
       currentFeedAmount = amount;
       
-      Serial.print("🍽️ Feed command received! Amount: ");
+      Serial.print("[FEED] Feed command received! Amount: ");
       Serial.print(amount);
       Serial.print("g, commandId: ");
       Serial.println(currentCommandId);
@@ -254,7 +257,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 
 void triggerFeeding(int amount, const char* reqUserId) {
   if (isFeeding) {
-    Serial.println("⚠️ Already feeding, ignoring command");
+    Serial.println("[WARN] Already feeding, ignoring command");
     return;
   }
   
@@ -265,7 +268,7 @@ void triggerFeeding(int amount, const char* reqUserId) {
   digitalWrite(LED_ACTUATOR_PIN, HIGH);
   digitalWrite(LED_BUILTIN_PIN, LOW);  // Turn on built-in LED too
   
-  Serial.println("🔄 Dispensing food...");
+  Serial.println("[FEED] Dispensing food...");
   
   // In a real implementation, you would:
   // 1. Activate servo to open food gate
@@ -286,7 +289,7 @@ void completeFeedingCycle(const char* userId) {
   digitalWrite(LED_ACTUATOR_PIN, LOW);
   digitalWrite(LED_BUILTIN_PIN, HIGH);
   
-  Serial.println("✅ Feeding complete!");
+  Serial.println("[OK] Feeding complete!");
   
   // Send completion status to gateway (unified schema)
   StaticJsonDocument<512> doc;
@@ -311,7 +314,7 @@ void completeFeedingCycle(const char* userId) {
   serializeJson(doc, buffer);
   
   mqttClient.publish(TOPIC_FEED_STATUS, buffer);
-  Serial.print("📤 Published to ");
+  Serial.print("[TX] Published to ");
   Serial.print(TOPIC_FEED_STATUS);
   Serial.print(": ");
   Serial.println(buffer);
@@ -330,7 +333,7 @@ void completeFeedingCycle(const char* userId) {
 
 void handleButtonPress() {
   // Send cat detected message
-  Serial.println("🐱 Cat detected! (button pressed)");
+  Serial.println("[CAT] Cat detected! (button pressed)");
   
   StaticJsonDocument<128> doc;
   doc["userId"] = USER_ID;
@@ -341,7 +344,7 @@ void handleButtonPress() {
   serializeJson(doc, buffer);
   
   mqttClient.publish(TOPIC_CAT_DETECTED, buffer);
-  Serial.print("📤 Published to ");
+  Serial.print("[TX] Published to ");
   Serial.print(TOPIC_CAT_DETECTED);
   Serial.print(": ");
   Serial.println(buffer);
@@ -370,7 +373,7 @@ void sendHeartbeat() {
   serializeJson(doc, buffer);
   
   mqttClient.publish(TOPIC_HEARTBEAT, buffer);
-  Serial.println("💓 Heartbeat sent");
+  Serial.println("[HEARTBEAT] Sent");
 }
 
 // ============================================================================

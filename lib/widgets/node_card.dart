@@ -141,17 +141,29 @@ class NodeCard extends StatelessWidget {
     IconData icon;
     Color color;
     String label;
+    String? warningText;
     
     switch (node.plateStatus) {
       case PlateStatus.filled:
         icon = Icons.check_circle;
         color = AppTheme.successColor;
         label = 'Filled';
+        // Add warning based on detection type
+        if (node.lastColorReading != null) {
+          final foodType = node.lastColorReading!.foodType;
+          if (foodType == FoodDetectionType.white) {
+            warningText = '⚠️ Demo: bright surface detected';
+            color = AppTheme.warningColor; // Orange for demo
+          } else if (foodType == FoodDetectionType.red) {
+            warningText = 'ℹ️ Red/colored food detected';
+          }
+        }
         break;
       case PlateStatus.empty:
         icon = Icons.warning_rounded;
         color = AppTheme.warningColor;
         label = 'Empty!';
+        warningText = 'Dark surface = empty';
         break;
       default:
         icon = Icons.help_outline;
@@ -159,26 +171,49 @@ class NodeCard extends StatelessWidget {
         label = 'Unknown';
     }
     
-    return Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(Icons.restaurant, size: 16, color: AppTheme.textSecondary),
-        const SizedBox(width: 6),
-        Flexible(
-          child: Text(
-            'Plate: ',
-            style: TextStyle(color: AppTheme.textSecondary, fontSize: 13),
-          ),
+        Row(
+          children: [
+            Icon(Icons.restaurant, size: 16, color: AppTheme.textSecondary),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                'Plate: ',
+                style: TextStyle(color: AppTheme.textSecondary, fontSize: 13),
+              ),
+            ),
+            Icon(icon, size: 16, color: color),
+            const SizedBox(width: 2),
+            Text(
+              label,
+              style: TextStyle(
+                color: color,
+                fontWeight: FontWeight.w600,
+                fontSize: 13,
+              ),
+            ),
+          ],
         ),
-        Icon(icon, size: 16, color: color),
-        const SizedBox(width: 2),
-        Text(
-          label,
-          style: TextStyle(
-            color: color,
-            fontWeight: FontWeight.w600,
-            fontSize: 13,
+        if (warningText != null) ...[
+          const SizedBox(height: 4),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(
+              warningText,
+              style: TextStyle(
+                fontSize: 10,
+                color: color,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
           ),
-        ),
+        ],
       ],
     );
   }

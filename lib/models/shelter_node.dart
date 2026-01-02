@@ -214,11 +214,12 @@ enum SignalStrength {
 }
 
 /// Color sensor reading from TCS3200
+/// red field now stores the raw pulse count (not RGB)
 class ColorReading {
-  final int red;
-  final int green;
-  final int blue;
-  final bool isBrown;
+  final int red;      // Raw pulse count from sensor
+  final int green;    // Unused in simplified mode (always 0)
+  final int blue;     // Unused in simplified mode (always 0)
+  final bool isBrown; // True if food detected (any type)
 
   ColorReading({
     required this.red,
@@ -226,6 +227,18 @@ class ColorReading {
     required this.blue,
     required this.isBrown,
   });
+
+  /// Thresholds matching ESP8266 config.h
+  static const int emptyThreshold = 200;
+  static const int redMinThreshold = 200;
+  static const int redMaxThreshold = 600;
+
+  /// Returns the food detection type for UI warnings
+  FoodDetectionType get foodType {
+    if (red <= emptyThreshold) return FoodDetectionType.empty;
+    if (red > redMinThreshold && red < redMaxThreshold) return FoodDetectionType.red;
+    return FoodDetectionType.white; // Demo mode (bright surface)
+  }
 
   Map<String, dynamic> toMap() {
     return {
@@ -247,8 +260,15 @@ class ColorReading {
 
   @override
   String toString() {
-    return 'RGB($red, $green, $blue) isBrown=$isBrown';
+    return 'Pulses($red) foodType=$foodType isBrown=$isBrown';
   }
+}
+
+/// Food detection type for UI warnings
+enum FoodDetectionType {
+  empty,  // Dark surface - no food
+  red,    // Red/colored food detected
+  white,  // White/bright surface - demo mode
 }
 
 /// Routing candidate for multi-hop decisions

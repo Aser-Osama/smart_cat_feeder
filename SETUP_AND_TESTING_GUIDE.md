@@ -254,16 +254,36 @@ adb install build/app/outputs/flutter-apk/app-release.apk
                    │ TX (GPIO1)    │    ❌ NOT USED (serial)
                    └───────────────┘
 
-    HC-SR04 Ultrasonic Sensor          TCS3200 Color Sensor (SIMPLIFIED)
+    HC-SR04 Ultrasonic Sensor          TCS3200 Color Sensor (10-PIN MODULE)
     ┌─────────────────────┐            ┌─────────────────────────────┐
-    │ VCC  TRIG  ECHO GND │            │ VCC  S0  S1  S2  S3  OUT GND │
-    └──┬────┬─────┬────┬──┘            └──┬───┬───┬───┬───┬────┬───┬──┘
-       │    │     │    │                  │   │   │   │   │    │   │
-       │    │     │    │                  │   │   │   │   │    │   │
-      5V   D5    D6   GND               3V3  D1  D2  GND GND  D7  GND
-                                                     ▲   ▲
-                                                     └───┴── HARDWIRED TO GND!
-                                                             (Red filter selected)
+    │ VCC  TRIG  ECHO GND │            │ GND  OUT  S2   S3   VCC     │  ← Row 1
+    └──┬────┬─────┬────┬──┘            │ VCC  S1   S0   LED  GND     │  ← Row 2
+       │    │     │    │               └──┬───┬────┬────┬────┬───┬───┘
+       │    │     │    │                  │   │    │    │    │   │
+       │    │     │    │                  │   │    │    │    │   │
+      5V   D5    D6   GND               GND  D7   D2   D1  3V3  GND
+                                              │    │    │    │
+                                              │   GND  GND  3V3 (or GPIO for LED control)
+                                              │    ▲    ▲
+                                              │    └────┴── S2/S3 HARDWIRED TO GND!
+                                              │              (Red filter selected)
+                                              └── Frequency output to D7
+
+    TCS3200 10-Pin Wiring Summary:
+    ┌─────────┬────────────┬─────────────────────────────────────┐
+    │ Pin     │ Connect To │ Notes                               │
+    ├─────────┼────────────┼─────────────────────────────────────┤
+    │ VCC     │ 3.3V       │ Powers module + LEDs (one is enough)│
+    │ GND     │ GND        │ Just one GND needed                 │
+    │ S0      │ D1 (GPIO5) │ Set HIGH in code (freq scaling)     │
+    │ S1      │ D2 (GPIO4) │ Set LOW in code (2% output)         │
+    │ S2      │ GND        │ ⚡ HARDWIRED to GND (red filter)    │
+    │ S3      │ GND        │ ⚡ HARDWIRED to GND (red filter)    │
+    │ OUT     │ D7 (GPIO13)│ Frequency output (pulse counting)   │
+    │ LED     │ (skip)     │ Not needed - LEDs powered by VCC    │
+    └─────────┴────────────┴─────────────────────────────────────┘
+    
+    Total wires needed: 6 (VCC, GND, S0, S1, S2→GND, S3→GND, OUT)
 ```
 
 > **⚠️ IMPORTANT:** S2 and S3 on the TCS3200 are connected directly to GND (not GPIO pins!).
@@ -279,17 +299,26 @@ adb install build/app/outputs/flutter-apk/app-release.apk
 | ECHO | D6 (GPIO12) | ✅ Safe GPIO - Echo pulse input |
 | GND | GND | Common ground |
 
-#### TCS3200 Color Sensor (Simplified for RED Detection)
+#### TCS3200 Color Sensor (10-Pin Module - Simplified for RED Detection)
+
+Your module has this pin layout:
+```
+Row 1: GND  OUT  S2   S3   VCC
+Row 2: VCC  S1   S0   LED  GND
+```
+
 | TCS3200 Pin | Connection | Notes |
 |-------------|------------|-------|
-| VCC | 3.3V or 5V | Works with either voltage |
+| VCC | 3.3V | Powers module + LEDs (only one VCC needed) |
+| GND | GND | Only one GND needed (internally connected) |
 | S0 | D1 (GPIO5) | ✅ Safe GPIO - Set HIGH (freq scaling) |
 | S1 | D2 (GPIO4) | ✅ Safe GPIO - Set LOW (2% output) |
 | **S2** | **GND** | ⚡ **HARDWIRED** - Selects RED filter |
 | **S3** | **GND** | ⚡ **HARDWIRED** - Selects RED filter |
 | OUT | D7 (GPIO13) | ✅ Safe GPIO - Frequency output |
-| GND | GND | Common ground |
-| OE | GND | Output Enable (active low) |
+| LED | *Not connected* | LEDs already powered by VCC on most modules |
+
+> **💡 Tip:** The dual VCC/GND pins are internally connected - you only need to wire **one of each**. The LED pin is typically not needed since the onboard LEDs turn on automatically with VCC.
 
 > **Why hardwire S2/S3 to GND?**
 > - S2=LOW, S3=LOW permanently selects the RED photodiode filter
@@ -519,27 +548,39 @@ mosquitto_pub -t "shelter/node/W/command" -m '{"action":"status"}'
 
 #### Test Color Sensor
 ```bash
-# Serial monitor should show RED pulse count readings:
-# [COLOR] Red pulses: 120 → NO FOOD (high count = less red)
-# [COLOR] Red pulses: 35  → FOOD PRESENT (low count = red detected)
+# Serial monitor shows detection with new logic: DARK = EMPTY, LIGHT = FOOD
 
-# Test with different objects:
+# Test with different surfaces:
 
-# White/empty plate:
-# [COLOR] Red pulses: 140+ → NOT RED (empty plate)
+# Dark/empty bowl:
+# [Color] Pulses: 128 → EMPTY (dark) - empty bowl detected!
 
-# Red kibble/marker:
-# [COLOR] Red pulses: 30-50 → RED DETECTED (food present)
+# White paper/bright surface (demo mode):
+# [Color] Pulses: 800+ → FOOD DETECTED [WHITE/demo]
+# Flutter shows: "⚠️ Demo: bright surface detected" (orange warning)
 
-# Note: Lower pulse count = more red light reflected = food present
+# Red/colored food (actual kibble):
+# [Color] Pulses: 300-500 → FOOD DETECTED [RED]
+# Flutter shows: "ℹ️ Red/colored food detected" (info message)
+
+# Detection logic (inverted from before):
+# - Pulses ≤ 200:     EMPTY (dark bowl absorbs light)
+# - Pulses 200-600:   FOOD - Red/colored (partial reflection)
+# - Pulses > 600:     FOOD - White/demo (high reflection)
 ```
 
 #### Calibrate Color Threshold
-If red detection is inaccurate, adjust in `config.h`:
+If detection is inaccurate for your specific setup, adjust in `config.h`:
 ```cpp
-// Adjust these values based on your calibration readings
-#define COLOR_FOOD_PRESENT_THRESHOLD  50   // Below this = RED food present
-#define COLOR_PLATE_EMPTY_THRESHOLD   150  // Above this = empty/no red
+// Thresholds for food detection (also sync with Flutter's ColorReading class!)
+#define COLOR_EMPTY_THRESHOLD        200  // Below = EMPTY (dark)
+#define COLOR_RED_MIN_THRESHOLD      200  // Red food range start
+#define COLOR_RED_MAX_THRESHOLD      600  // Red food range end, above = white/demo
+
+// Calibration tip: Use serial monitor to see raw pulse values for:
+// 1. Your empty bowl → should be < EMPTY_THRESHOLD
+// 2. Red/colored food → should be between RED_MIN and RED_MAX
+// 3. White surface (demo) → should be > RED_MAX
 ```
 
 ---
