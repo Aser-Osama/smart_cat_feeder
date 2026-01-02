@@ -25,7 +25,7 @@ import json
 import time
 import signal
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from threading import Thread, Event
 
 import paho.mqtt.client as mqtt
@@ -89,6 +89,9 @@ class ShelterMonitoringGateway:
                 'plate_status': 'unknown',
                 'cat_present': False
             }
+        
+        # Sync with existing Firestore nodes at startup
+        self._sync_firestore_nodes()
     
     def _init_firebase(self):
         """Initialize Firebase Admin SDK"""
@@ -130,6 +133,57 @@ class ShelterMonitoringGateway:
         except Exception as e:
             logger.error(f"❌ MQTT connection failed: {e}")
             sys.exit(1)
+    
+    def _sync_firestore_nodes(self):
+        """Sync with existing Firestore nodes at startup to mark stale nodes as offline"""
+        if not self.db:
+            return
+        
+        try:
+            user_id = "EyrwFFoBJ8TlVFepJvqdeooOBwA2"
+            nodes_ref = self.db.collection("users").document(user_id).collection("nodes")
+            nodes = nodes_ref.stream()
+            
+            now = datetime.now(timezone.utc)  # Use UTC timezone
+            
+            for node_doc in nodes:
+                node_data = node_doc.to_dict()
+                node_id = node_doc.id
+                
+                # Check if node is marked online in Firestore
+                is_online = node_data.get('isOnline', False)
+                last_update = node_data.get('lastUpdate')
+                
+                if is_online and last_update:
+                    # Firestore timestamp is already timezone-aware (UTC)
+                    delta = (now - last_update).total_seconds()
+                    
+                    # If node hasn't updated in over 2 minutes, mark offline immediately
+                    if delta > 120:
+                        logger.warning(f"⚠️ Startup: Node {node_id} is stale (last seen {delta:.0f}s ago), marking offline")
+                        try:
+                            nodes_ref.document(node_id).update({
+                                'isOnline': False,
+                                'lastUpdate': firestore.SERVER_TIMESTAMP
+                            })
+                            logger.info(f"✅ Marked node {node_id} as offline during startup")
+                        except Exception as e:
+                            logger.error(f"❌ Failed to mark node {node_id} offline: {e}")
+                
+                # Ensure we're tracking this node
+                if node_id not in self.node_status:
+                    self.node_status[node_id] = {
+                        'last_seen': last_update if last_update else None,
+                        'online': False,  # Will be set to True when telemetry arrives
+                        'battery': node_data.get('batteryPercent', 0),
+                        'plate_status': node_data.get('plateStatus', 'unknown'),
+                        'cat_present': node_data.get('catPresent', False)
+                    }
+            
+            logger.info(f"✅ Synced {len(self.node_status)} nodes from Firestore")
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to sync Firestore nodes: {e}")
     
     def _on_mqtt_connect(self, client, userdata, flags, rc):
         """MQTT connection callback"""
@@ -506,9 +560,13 @@ class ShelterMonitoringGateway:
     
     def _monitor_node_status(self):
         """Background thread to monitor node connectivity"""
+        logger.info("🔍 Node monitoring thread started")
+        
         while not self.stop_event.is_set():
             try:
                 now = datetime.now()
+                online_count = 0
+                offline_count = 0
                 
                 for node_id, status in self.node_status.items():
                     last_seen = status.get('last_seen')
@@ -519,6 +577,7 @@ class ShelterMonitoringGateway:
                         if delta > 120 and status['online']:
                             logger.warning(f"⚠️ Node {node_id} appears offline (last seen {delta:.0f}s ago)")
                             status['online'] = False
+                            offline_count += 1
                             
                             # Update Firestore with timestamp to trigger listeners
                             if self.db:
@@ -532,11 +591,21 @@ class ShelterMonitoringGateway:
                                     logger.info(f"✅ Marked node {node_id} as offline in Firestore")
                                 except Exception as e:
                                     logger.error(f"❌ Failed to mark node {node_id} offline: {e}")
+                        elif status['online']:
+                            online_count += 1
+                    elif status['online']:
+                        # Node marked online but no last_seen? This shouldn't happen
+                        logger.warning(f"⚠️ Node {node_id} is marked online but has no last_seen timestamp")
+                        status['online'] = False
+                
+                # Log monitoring status every 5 minutes
+                if int(time.time()) % 300 < 30:
+                    logger.info(f"📊 Node status: {online_count} online, {len(self.node_status) - online_count} offline")
                 
                 time.sleep(30)  # Check every 30 seconds
                 
             except Exception as e:
-                logger.error(f"Node monitor error: {e}")
+                logger.error(f"❌ Node monitor error: {e}", exc_info=True)
                 time.sleep(10)
     
     # ========================================================================
