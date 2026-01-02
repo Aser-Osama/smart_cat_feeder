@@ -437,8 +437,19 @@ void sendTelemetry(SensorData& data) {
   compactDoc["s"] = WiFi.RSSI();                              // rssi
   compactDoc["h"] = routing.getHopCount() + 1;                // hopCount (+1 for relay)
   
+  // Add route tracking - start with origin node
+  JsonArray compactRoute = compactDoc.createNestedArray("rt");
+  compactRoute.add(nodeIdString);
+  
   char compactBuffer[150];
   size_t compactLen = serializeJson(compactDoc, compactBuffer);
+  
+  // Verify compact JSON fits in ESP-NOW payload limit
+  if (compactLen >= 150) {
+    LOG_CRITICAL("[WARN] Compact JSON too large: %d bytes (limit 150)\n", compactLen);
+    compactLen = 149;  // Truncate to fit
+    compactBuffer[149] = '\0';
+  }
   
   // Determine how to send based on routing decision
   char nextHop = routing.getNextHop();
@@ -793,6 +804,16 @@ void loop() {
         int copyLen = min((int)msg->payloadLen, 159);
         memcpy(payloadBuf, msg->payload, copyLen);
         payloadBuf[copyLen] = '\0';
+        
+        // If compact format, append relay node to route
+        StaticJsonDocument<160> relayDoc;
+        DeserializationError err = deserializeJson(relayDoc, payloadBuf);
+        if (!err && relayDoc.containsKey("rt")) {
+          // Append relay node ID to route
+          JsonArray rt = relayDoc["rt"];
+          rt.add(nodeIdString);
+          serializeJson(relayDoc, payloadBuf, sizeof(payloadBuf));
+        }
         
         bool published = mqttClient.publish(topic.c_str(), payloadBuf);
         battery.drainForWifiTx();

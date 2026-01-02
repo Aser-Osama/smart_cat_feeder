@@ -26,7 +26,7 @@
 // WIFI CONFIGURATION
 // ============================================================================
 const char* WIFI_SSID     = "Aser";
-const char* WIFI_PASSWORD = "1234567899abcc";
+const char* WIFI_PASSWORD = "1234567899abc";
 
 // ============================================================================
 // MQTT CONFIGURATION (Orange Pi Sink)
