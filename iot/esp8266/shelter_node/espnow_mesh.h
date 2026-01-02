@@ -121,23 +121,116 @@ private:
   char dataAckOrigin;
   uint8_t dataAckSeq;
   
+  // Channel scanning state
+  bool channelScanned;
+  int foundChannel;
+  unsigned long lastChannelScan;
+  
   // Singleton for callbacks
   static ESPNowMesh* instance;
 
 public:
+  // Scan channels to find peers (for WiFi-less mode)
+  #if ESPNOW_CHANNEL_SCAN
+  int scanForPeers() {
+    LOG_CRITICAL("[ESPNOW] Scanning for peers...\n");
+    
+    uint8_t scanChannels[] = ESPNOW_SCAN_CHANNELS;
+    int bestChannel = ESPNOW_FIXED_CHANNEL;
+    bool foundPeer = false;
+    
+    for (int i = 0; i < ESPNOW_SCAN_CHANNELS_COUNT; i++) {
+      int ch = scanChannels[i];
+      wifi_set_channel(ch);
+      wifiChannel = ch;
+      
+      LOG_CRITICAL("[ESPNOW] Ch %d: ", ch);
+      
+      // Listen for discovery beacons from peers on this channel
+      // Peers broadcast discovery every 5s, so we need to wait long enough
+      unsigned long scanStart = millis();
+      int discoveryCount = 0;
+      
+      while (millis() - scanStart < ESPNOW_SCAN_DWELL_MS) {
+        // Send our own discovery every ~500ms (peers may ACK or just broadcast back)
+        if (discoveryCount < ESPNOW_SCAN_DISCOVERIES && 
+            (millis() - scanStart) >= (discoveryCount * 500)) {
+          sendDiscovery(50.0, false);  // Dummy battery, no sink access
+          Serial.print(".");
+          discoveryCount++;
+        }
+        
+        // Process deferred ACKs (in case we need to respond)
+        processDeferredOps(50.0, false);
+        
+        // The key: onRecv() callback updates peers[] directly when we receive
+        // discovery or ACK messages. We just need to yield to allow callbacks.
+        yield();
+        delay(10);  // Small delay to allow radio to receive
+        
+        // Check if we got any peer responses
+        if (getPeerCount() > 0) {
+          foundPeer = true;
+          bestChannel = ch;
+          Serial.println(" FOUND!");
+          LOG_CRITICAL("[ESPNOW] Found %d peer(s) on ch %d\n", getPeerCount(), ch);
+          break;
+        }
+      }
+      
+      if (foundPeer) break;
+      Serial.println(" none");
+    }
+    
+    if (!foundPeer) {
+      LOG_CRITICAL("[ESPNOW] No peers found after full scan\n");
+      LOG_CRITICAL("[ESPNOW] Defaulting to ch %d (must match other nodes!)\n", ESPNOW_FIXED_CHANNEL);
+      bestChannel = ESPNOW_FIXED_CHANNEL;
+    }
+    
+    // Set the found/default channel
+    wifi_set_channel(bestChannel);
+    wifiChannel = bestChannel;
+    foundChannel = bestChannel;
+    channelScanned = true;
+    lastChannelScan = millis();
+    
+    return bestChannel;
+  }
+  
+  bool needsChannelRescan() {
+    // Rescan if no peers found and enough time passed
+    if (WiFi.status() == WL_CONNECTED) return false;  // WiFi handles channel
+    if (getPeerCount() > 0) return false;  // Have peers, no need
+    if (!channelScanned) return true;  // Never scanned
+    return (millis() - lastChannelScan) > ESPNOW_SCAN_INTERVAL_MS;
+  }
+  #endif
+
   // Get the channel that should be used for ESP-NOW
   // If WiFi connected: use WiFi's channel
-  // If WiFi disconnected: use fixed channel and SET it explicitly
+  // If WiFi disconnected: use fixed channel or scan for peers
   int determineAndSetChannel() {
     if (WiFi.status() == WL_CONNECTED) {
       int ch = WiFi.channel();
-      LOGF("[ESPNOW] WiFi connected, using WiFi channel: %d\n", ch);
+      LOG_CRITICAL("[ESPNOW] WiFi connected, ch %d\n", ch);
       return ch;
     } else {
-      // WiFi not connected - we MUST set channel explicitly
+      // WiFi not connected - need to find the right channel
+      #if ESPNOW_CHANNEL_SCAN
+      if (needsChannelRescan()) {
+        return scanForPeers();
+      } else if (channelScanned && foundChannel > 0) {
+        wifi_set_channel(foundChannel);
+        LOG_CRITICAL("[ESPNOW] Using found ch %d\n", foundChannel);
+        return foundChannel;
+      }
+      #endif
+      
+      // Fallback: use fixed channel
       int ch = ESPNOW_FIXED_CHANNEL;
-      wifi_set_channel(ch);  // ESP8266 SDK function
-      LOGF("[ESPNOW] WiFi disconnected, forcing channel: %d\n", ch);
+      wifi_set_channel(ch);
+      LOG_CRITICAL("[ESPNOW] No WiFi, using ch %d\n", ch);
       return ch;
     }
   }
@@ -146,16 +239,10 @@ public:
     myNodeId = nodeId;
     instance = this;
     
-    // Determine channel: if -1 passed, auto-detect
-    if (channel <= 0) {
-      wifiChannel = determineAndSetChannel();
-    } else {
-      wifiChannel = channel;
-      // If explicit channel passed but WiFi not connected, set it
-      if (WiFi.status() != WL_CONNECTED) {
-        wifi_set_channel(wifiChannel);
-      }
-    }
+    // Initialize channel scanning state
+    channelScanned = false;
+    foundChannel = -1;
+    lastChannelScan = 0;
     
     txCount = rxCount = txOk = txFail = forwardCount = droppedCount = 0;
     lastSeqNum = 0;
@@ -180,7 +267,7 @@ public:
       seenMsgs[i].timestamp = 0;
     }
     
-    // Initialize ESP-NOW
+    // MUST initialize ESP-NOW BEFORE scanning (so we can send/receive)
     if (esp_now_init() != 0) {
       LOGLN("[ERROR] ESP-NOW init failed!");
       return;
@@ -190,9 +277,17 @@ public:
     esp_now_register_send_cb(onSentStatic);
     esp_now_register_recv_cb(onRecvStatic);
     
-    // Add broadcast peer
-    if (esp_now_add_peer(broadcastMac, ESP_NOW_ROLE_COMBO, wifiChannel, NULL, 0) != 0) {
-      LOGLN("[ERROR] Failed to add broadcast peer");
+    // Add broadcast peer (needed for discovery)
+    esp_now_add_peer(broadcastMac, ESP_NOW_ROLE_COMBO, ESPNOW_FIXED_CHANNEL, NULL, 0);
+    
+    // NOW we can determine channel (and scan if needed)
+    if (channel <= 0) {
+      wifiChannel = determineAndSetChannel();
+    } else {
+      wifiChannel = channel;
+      if (WiFi.status() != WL_CONNECTED) {
+        wifi_set_channel(wifiChannel);
+      }
     }
     
     LOGF("[OK] ESP-NOW initialized on channel %d\n", wifiChannel);
@@ -238,11 +333,10 @@ public:
       // Channel verification - if we received it, we're on same channel!
       uint8_t myChannel = getCurrentChannel();
       bool peerHasSink = (disc->hasSinkAccess == 1);
-      #if DEBUG_ESPNOW
-      LOGF("[ESPNOW-RX] Discovery from Node %c (batt:%.0f%%, rssi:%d, ch:%d, sink:%s) [my ch:%d]\n",
-                    disc->nodeId, disc->batteryPercent, disc->rssi, disc->channel, 
-                    peerHasSink ? "YES" : "NO", myChannel);
-      #endif
+      
+      // ALWAYS log discovery reception with channel info
+      LOG_CRITICAL("[ESPNOW-RX] Discovery from %c (ch:%d, myCh:%d, sink:%s)\n",
+                    disc->nodeId, disc->channel, myChannel, peerHasSink ? "Y" : "N");
       
       // Update or add peer with their sink access status
       updatePeer(mac, disc->nodeId, disc->batteryPercent, disc->rssi, peerHasSink);
@@ -387,6 +481,12 @@ public:
     return nullptr;
   }
   
+  ESPNowPeer* getPeerByIndex(int index) {
+    if (index < 0 || index >= MAX_ESPNOW_PEERS) return nullptr;
+    if (peers[index].active) return &peers[index];
+    return nullptr;
+  }
+  
   ESPNowPeer* getPeers() {
     return peers;
   }
@@ -498,7 +598,7 @@ public:
     msg.seqNum = ++lastSeqNum;
     msg.visitedCount = 1;
     msg.visited[0] = myNodeId;
-    msg.visited[1] = '\0';
+    // Don't null-terminate - visitedCount tracks length
     msg.payloadLen = safeLen;
     memcpy(msg.payload, payload, safeLen);
     
@@ -557,8 +657,8 @@ public:
     // Update destNode to the next hop
     msg->destNode = nextHop;
     
-    // Add ourselves to visited list
-    if (msg->visitedCount < 4) {
+    // Add ourselves to visited list (array has 5 slots)
+    if (msg->visitedCount < 5) {
       msg->visited[msg->visitedCount++] = myNodeId;
     }
     

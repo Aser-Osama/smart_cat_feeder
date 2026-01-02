@@ -236,12 +236,17 @@ void setupWiFi() {
 // ============================================================================
 
 void connectMQTT() {
+  // Don't attempt MQTT if WiFi is not connected
+  if (WiFi.status() != WL_CONNECTED) {
+    return;
+  }
+  
   int attempts = 0;
   while (!mqttClient.connected() && attempts < 3) {  // Limit retry attempts
-    LOGF("[MQTT] Connecting to broker %s...", MQTT_BROKER);
+    LOG_EVENT("[MQTT] Connecting to broker...");
     
     if (mqttClient.connect(mqttClientId.c_str())) {
-      LOG_EVENT("MQTT connected");
+      LOG_EVENT("[MQTT] Connected");
       
       // Subscribe to mesh topics for routing
       mqttClient.subscribe(TOPIC_MESH_NEIGHBOR);
@@ -461,8 +466,42 @@ void sendTelemetry(SensorData& data) {
     battery.drainForWifiTx();
   }
   #else
-  // NORMAL MODE: Use best route
-  if (nextHop != 'S' && espnowMesh.getPeer(nextHop) != nullptr) {
+  // NORMAL MODE: Use best route, but handle WiFi-less fallback
+  bool wifiAvailable = (WiFi.status() == WL_CONNECTED) && mqttClient.connected();
+  
+  if (!wifiAvailable && espnowMesh.getPeerCount() > 0) {
+    // WiFi is DOWN but we have ESP-NOW peers - use them as relay!
+    char targetPeer = 0;
+    
+    // Find a peer with sink access (can relay to MQTT)
+    for (int i = 0; i < MAX_ESPNOW_PEERS; i++) {
+      ESPNowPeer* peer = espnowMesh.getPeerByIndex(i);
+      if (peer && peer->nodeId != 0 && peer->hasSinkAccess) {
+        targetPeer = peer->nodeId;
+        break;
+      }
+    }
+    
+    // If no peer with sink access, try any peer
+    if (targetPeer == 0) {
+      ESPNowPeer* peer = espnowMesh.getPeerByIndex(0);
+      if (peer && peer->nodeId != 0) {
+        targetPeer = peer->nodeId;
+      }
+    }
+    
+    if (targetPeer != 0) {
+      bool sent = espnowMesh.sendData(targetPeer, MSG_TYPE_TELEMETRY, compactBuffer, compactLen);
+      if (sent) {
+        LOG_CRITICAL("[TX] WiFi down! Using ESP-NOW relay -> Node %c (%d bytes)\n", targetPeer, compactLen);
+      } else {
+        LOG_CRITICAL("[TX] ESP-NOW relay failed, no fallback available\n");
+      }
+    } else {
+      LOG_CRITICAL("[TX] WiFi down, no ESP-NOW peers available!\n");
+    }
+  }
+  else if (nextHop != 'S' && espnowMesh.getPeer(nextHop) != nullptr) {
     // Route via ESP-NOW to another node - use COMPACT payload
     bool sent = espnowMesh.sendData(nextHop, MSG_TYPE_TELEMETRY, compactBuffer, compactLen);
     if (sent) {
@@ -471,14 +510,18 @@ void sendTelemetry(SensorData& data) {
     } else {
       // Fallback to direct MQTT if ESP-NOW fails
       LOG_CRITICAL("[TX] ESP-NOW fail, fallback MQTT\n");
-      mqttClient.publish(topicTelemetry.c_str(), buffer);
-      battery.drainForWifiTx();
+      if (wifiAvailable) {
+        mqttClient.publish(topicTelemetry.c_str(), buffer);
+        battery.drainForWifiTx();
+      }
     }
-  } else {
+  } else if (wifiAvailable) {
     // Direct to sink via MQTT - use full JSON
     mqttClient.publish(topicTelemetry.c_str(), buffer);
     battery.drainForWifiTx();
     LOG_CRITICAL("[TX] Telemetry via MQTT\n");
+  } else {
+    LOG_CRITICAL("[TX] No route available (WiFi down, no peers)\n");
   }
   #endif  // FORCE_MULTIHOP
   #else
@@ -662,17 +705,27 @@ void sendNeighborBeacon() {
 void loop() {
   unsigned long now = millis();
   
-  // Ensure MQTT connection
-  if (!mqttClient.connected()) {
-    connectMQTT();
+  // Try MQTT connection only if WiFi is connected
+  if (WiFi.status() == WL_CONNECTED) {
+    if (!mqttClient.connected()) {
+      connectMQTT();
+    }
+    mqttClient.loop();
   }
-  mqttClient.loop();
   
   // Update battery for idle time
   battery.update(false, false, false);
   
   #if ESPNOW_ENABLED
   // --- ESP-NOW Operations ---
+  
+  // If WiFi is down, periodically rescan channels to find peers
+  #if ESPNOW_CHANNEL_SCAN
+  if (WiFi.status() != WL_CONNECTED && espnowMesh.needsChannelRescan()) {
+    LOG_CRITICAL("[LOOP] WiFi down, rescanning for ESP-NOW peers...\n");
+    espnowMesh.scanForPeers();
+  }
+  #endif
   
   // Determine if this node has direct sink access (MQTT connected)
   bool hasSinkAccess = mqttClient.connected();

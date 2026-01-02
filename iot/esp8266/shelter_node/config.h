@@ -12,7 +12,7 @@
 // ============================================================================
 // NODE IDENTITY - CHANGE THIS FOR EACH NODE
 // ============================================================================
-#define NODE_ID 'W'  // Change to 'X', 'Y', or 'Z' for other nodes
+#define NODE_ID 'X'  // Change to 'X', 'Y', or 'Z' for other nodes
 
 // ============================================================================
 // MULTI-HOP DEMO MODE
@@ -26,7 +26,7 @@
 // WIFI CONFIGURATION
 // ============================================================================
 const char* WIFI_SSID     = "Aser";
-const char* WIFI_PASSWORD = "1234567899abc";
+const char* WIFI_PASSWORD = "1234567899abcc";
 
 // ============================================================================
 // MQTT CONFIGURATION (Orange Pi Sink)
@@ -166,12 +166,20 @@ const int   MQTT_PORT     = 1883;
 // ESP-NOW CONFIGURATION
 // ============================================================================
 #define ESPNOW_ENABLED             1       // Enable real ESP-NOW mesh
-#define ESPNOW_FIXED_CHANNEL       11      // Fixed channel when WiFi disconnected (1-13)
+#define ESPNOW_FIXED_CHANNEL       11      // Fallback channel (match your WiFi AP!)
                                            // MUST match your WiFi AP's channel for coexistence!
 #define ESPNOW_DISCOVERY_INTERVAL  5000    // Send discovery every 5 seconds
 #define ESPNOW_DATA_FORWARD_TTL    3       // Max hops for forwarded messages
 #define ESPNOW_PEER_TIMEOUT_MS     60000   // Peer expires after 60s no contact
 #define MAX_ESPNOW_PEERS           4       // Max ESP-NOW peers (W, X, Y, Z)
+
+// Channel scanning for WiFi-less mode
+#define ESPNOW_CHANNEL_SCAN        1       // Enable channel scanning when WiFi disconnected
+#define ESPNOW_SCAN_CHANNELS       {11, 6, 1}  // Scan 11 first (most common), then 6, then 1
+#define ESPNOW_SCAN_CHANNELS_COUNT 3       // Number of channels to scan
+#define ESPNOW_SCAN_DWELL_MS       6000    // 6s per channel (peers beacon every 5s)
+#define ESPNOW_SCAN_INTERVAL_MS    30000   // Re-scan every 30s if no peers found
+#define ESPNOW_SCAN_DISCOVERIES    6       // Send discovery every second during scan
 
 // ESP-NOW Message Types
 #define MSG_TYPE_DISCOVERY         1
