@@ -198,6 +198,7 @@ const int   MQTT_PORT     = 1883;
 #define MSG_TYPE_TELEMETRY         3
 #define MSG_TYPE_ALERT             4
 #define MSG_TYPE_ROUTING           5
+#define MSG_TYPE_CONFIG            7
 
 // ============================================================================
 // DEBUG FLAGS

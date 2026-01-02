@@ -346,10 +346,13 @@ void connectMQTT() {
       mqttClient.subscribe(TOPIC_MESH_FORWARD);
       mqttClient.subscribe(TOPIC_BROADCAST_CONFIG);
       
-      // Subscribe to calibration topic
+      // Subscribe to own calibration topic
       mqttClient.subscribe(topicCalibration.c_str());
       
-      LOGLN("   Subscribed to mesh, config, and calibration topics");
+      // Subscribe to all node calibration topics (for ESP-NOW forwarding)
+      mqttClient.subscribe("shelter/node/+/config/calibration");
+      
+      LOGLN("   Subscribed to mesh, config, and all calibration topics");
       
       // Send initial presence announcement
       sendNeighborBeacon();
@@ -398,6 +401,16 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   // Handle calibration updates
   else if (strcmp(topic, topicCalibration.c_str()) == 0) {
     handleCalibrationUpdate(message);
+  }
+  // Handle calibration for OTHER nodes (gateway forwarding to ESP-NOW nodes)
+  else if (strncmp(topic, TOPIC_TELEMETRY_PREFIX, strlen(TOPIC_TELEMETRY_PREFIX)) == 0 &&
+           strstr(topic, "/config/calibration") != nullptr) {
+    // Extract target node ID from topic: shelter/node/X/config/calibration
+    char targetNode = topic[strlen(TOPIC_TELEMETRY_PREFIX)];
+    if (targetNode != nodeId && (targetNode == 'W' || targetNode == 'X' || targetNode == 'Y' || targetNode == 'Z')) {
+      LOGF("[MQTT-RX] Calibration for Node %c - forwarding via ESP-NOW\n", targetNode);
+      sendConfigViaESPNow(targetNode, message);
+    }
   }
 }
 
@@ -503,6 +516,35 @@ void handleCalibrationUpdate(const char* message) {
   
   // Save to EEPROM for persistence across reboots
   saveCalibrationToEEPROM();
+}
+
+// Send calibration config to another node via ESP-NOW
+void sendConfigViaESPNow(char targetNode, const char* configJson) {
+  #if ENABLE_ESPNOW
+  int jsonLen = strlen(configJson);
+  if (jsonLen > 149) {  // Leave room for null terminator
+    LOGLN("[ERROR] Config JSON too large for ESP-NOW");
+    return;
+  }
+  
+  // Find the MAC address of the target node
+  uint8_t targetMac[6];
+  bool found = espnowMesh.getPeerMac(targetNode, targetMac);
+  
+  if (!found) {
+    LOGF("[CONFIG] Target node %c not found in ESP-NOW peers\n", targetNode);
+    return;
+  }
+  
+  // Send config message via ESP-NOW
+  bool sent = espnowMesh.sendData(targetMac, MSG_TYPE_CONFIG, configJson, jsonLen);
+  
+  if (sent) {
+    LOGF("[CONFIG] Sent calibration to Node %c via ESP-NOW\n", targetNode);
+  } else {
+    LOGF("[CONFIG] Failed to send to Node %c\n", targetNode);
+  }
+  #endif
 }
 
 // ============================================================================
@@ -917,6 +959,24 @@ void loop() {
     if (msg == nullptr) break;  // Safety check
     
     LOG_CRITICAL("[FWD] Data from Node %c (type:%d)\n", msg->originNode, msg->type);
+    
+    // If this message is addressed to us (not for forwarding), process it locally
+    if (msg->destNode == nodeId) {
+      if (msg->type == MSG_TYPE_CONFIG) {
+        // Config message for this node - extract and apply calibration
+        char payloadBuf[160];
+        int copyLen = min((int)msg->payloadLen, 159);
+        memcpy(payloadBuf, msg->payload, copyLen);
+        payloadBuf[copyLen] = '\0';
+        
+        LOGF("[CONFIG] Received via ESP-NOW from %c\n", msg->originNode);
+        handleCalibrationUpdate(payloadBuf);
+        
+        // Don't forward config messages that reached their destination
+        yield();
+        continue;
+      }
+    }
     
     // FIX: Always forward to MQTT if we have connectivity, regardless of own routing preference
     // This prevents the bug where we'd try to forward back to the sender

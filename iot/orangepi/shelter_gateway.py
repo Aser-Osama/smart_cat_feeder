@@ -520,16 +520,18 @@ class ShelterMonitoringGateway:
                             logger.warning(f"⚠️ Node {node_id} appears offline (last seen {delta:.0f}s ago)")
                             status['online'] = False
                             
-                            # Update Firestore
+                            # Update Firestore with timestamp to trigger listeners
                             if self.db:
-                                # Find user ID from any stored node
-                                # For simplicity, using hardcoded user ID
                                 user_id = "EyrwFFoBJ8TlVFepJvqdeooOBwA2"
                                 try:
                                     node_ref = self.db.collection("users").document(user_id).collection("nodes").document(node_id)
-                                    node_ref.set({'isOnline': False}, merge=True)
-                                except:
-                                    pass
+                                    node_ref.update({
+                                        'isOnline': False,
+                                        'lastUpdate': firestore.SERVER_TIMESTAMP
+                                    })
+                                    logger.info(f"✅ Marked node {node_id} as offline in Firestore")
+                                except Exception as e:
+                                    logger.error(f"❌ Failed to mark node {node_id} offline: {e}")
                 
                 time.sleep(30)  # Check every 30 seconds
                 

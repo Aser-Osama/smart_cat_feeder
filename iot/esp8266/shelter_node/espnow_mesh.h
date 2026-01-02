@@ -39,10 +39,10 @@ struct __attribute__((packed)) ESPNowDataAck {
   uint8_t status;         // 1 = received & will forward, 0 = received but cannot forward
 };
 
-// Data message for forwarding telemetry/alerts
+// Data message for forwarding telemetry/alerts/config
 // IMPORTANT: Keep payload size moderate (<=150 bytes) for ESP8266 ESP-NOW reliability
 struct __attribute__((packed)) ESPNowDataMsg {
-  uint8_t type;           // MSG_TYPE_TELEMETRY, MSG_TYPE_ALERT, etc.
+  uint8_t type;           // MSG_TYPE_TELEMETRY, MSG_TYPE_ALERT, MSG_TYPE_CONFIG, etc.
   char originNode;        // Original sender
   char destNode;          // 'S' for sink, or node ID
   uint8_t ttl;            // Time to live (decremented each hop)
@@ -376,8 +376,8 @@ public:
                       dataAck->ackNode, dataAck->seqNum);
       }
     }
-    // Handle data messages (for forwarding)
-    else if ((msgType == MSG_TYPE_TELEMETRY || msgType == MSG_TYPE_ALERT) && 
+    // Handle data messages (for forwarding telemetry, alerts, and config)
+    else if ((msgType == MSG_TYPE_TELEMETRY || msgType == MSG_TYPE_ALERT || msgType == MSG_TYPE_CONFIG) && 
              len >= (sizeof(ESPNowDataMsg) - 150)) {  // Adjusted for new payload size
       ESPNowDataMsg* dataMsg = (ESPNowDataMsg*)data;
       
@@ -479,6 +479,15 @@ public:
       }
     }
     return nullptr;
+  }
+  
+  bool getPeerMac(char nodeId, uint8_t* macOut) {
+    ESPNowPeer* peer = getPeer(nodeId);
+    if (peer) {
+      memcpy(macOut, peer->mac, 6);
+      return true;
+    }
+    return false;
   }
   
   ESPNowPeer* getPeerByIndex(int index) {
