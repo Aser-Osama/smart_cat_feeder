@@ -218,40 +218,38 @@ adb install build/app/outputs/flutter-apk/app-release.apk
 |-----------|----------|---------|
 | ESP8266 NodeMCU | 1 | Microcontroller |
 | HC-SR04 Ultrasonic | 1 | Cat presence detection |
-| TCS3200 Color Sensor | 1 | Food (RED) detection |
+| TCS3200 Color Sensor | 1 | Food (BROWN) detection via RGB |
 | LED (any color) | 1 | Status indicator |
 | 220Ω Resistor | 1 | LED current limiting |
 | Breadboard | 1 | Prototyping |
-| Jumper wires | ~10 | Connections (simplified!) |
+| Jumper wires | ~12 | Connections |
 | USB cable | 1 | Power & programming |
 
-> **📝 Note:** The wiring has been simplified! S2 and S3 pins on the TCS3200 are hardwired to GND, which permanently selects the RED color filter. This reduces GPIO usage and avoids boot-critical ESP8266 pins. Use **red-colored kibble or a red bowl marker** for food detection.
+> **📝 Note:** Full RGB detection for brown food! All RGB channels are read to identify brown cat food specifically. Uses boot-safe GPIO pins only.
 
-### 2.2 Wiring Diagram (Simplified - Only 6 GPIO Pins!)
+### 2.2 Wiring Diagram (Full RGB Brown Detection - BOOT-SAFE!)
 
 ```
                     ESP8266 NodeMCU
                    ┌───────────────┐
                    │               │
-    [USB Power] ──►│ 5V        3V3 │──► TCS3200 VCC (or use 5V)
+    [USB Power] ──►│ 5V        3V3 │──► TCS3200 VCC
                    │               │
                    │ GND       GND │◄── All GND connections
-                   │               │    (including TCS3200 S2, S3!)
                    │               │
                    │ D5 (GPIO14)   │──► HC-SR04 TRIG
                    │ D6 (GPIO12)   │◄── HC-SR04 ECHO
                    │               │
-                   │ D1 (GPIO5)    │──► TCS3200 S0 (set HIGH)
-                   │ D2 (GPIO4)    │──► TCS3200 S1 (set LOW)
-                   │ D7 (GPIO13)   │◄── TCS3200 OUT
+                   │ D1 (GPIO5)    │──► TCS3200 S0 (freq HIGH)
+                   │ D2 (GPIO4)    │──► TCS3200 S1 (freq LOW)
+                   │ D7 (GPIO13)   │──► TCS3200 S2 (filter select)
+                   │ D4 (GPIO2)    │──► TCS3200 S3 (filter select)
+                   │ D3 (GPIO0)    │◄── TCS3200 OUT (pulses)
                    │               │
                    │ D0 (GPIO16)   │──► LED (+) via 220Ω
                    │               │
-                   │ D3 (GPIO0)    │    ❌ NOT USED (boot pin)
-                   │ D4 (GPIO2)    │    ❌ NOT USED (boot pin)
-                   │ D8 (GPIO15)   │    ❌ NOT USED (boot pin)
-                   │ RX (GPIO3)    │    ❌ NOT USED (serial)
-                   │ TX (GPIO1)    │    ❌ NOT USED (serial)
+                   │ D8 (GPIO15)   │    ❌ NOT USED (boot pin LOW req)
+                   │ RX/TX         │    ❌ NOT USED (serial debug)
                    └───────────────┘
 
     HC-SR04 Ultrasonic Sensor          TCS3200 Color Sensor (10-PIN MODULE)
@@ -261,33 +259,34 @@ adb install build/app/outputs/flutter-apk/app-release.apk
        │    │     │    │               └──┬───┬────┬────┬────┬───┬───┘
        │    │     │    │                  │   │    │    │    │   │
        │    │     │    │                  │   │    │    │    │   │
-      5V   D5    D6   GND               GND  D7   D2   D1  3V3  GND
-                                              │    │    │    │
-                                              │   GND  GND  3V3 (or GPIO for LED control)
-                                              │    ▲    ▲
-                                              │    └────┴── S2/S3 HARDWIRED TO GND!
-                                              │              (Red filter selected)
-                                              └── Frequency output to D7
+      5V   D5    D6   GND               GND  D3   D2   D1  3V3  GND
+                                              │    │    │
+                                             D7   D4  (skip LED pin)
+                                             S2   S3  ← All 5 pins used!
 
     TCS3200 10-Pin Wiring Summary:
     ┌─────────┬────────────┬─────────────────────────────────────┐
     │ Pin     │ Connect To │ Notes                               │
     ├─────────┼────────────┼─────────────────────────────────────┤
-    │ VCC     │ 3.3V       │ Powers module + LEDs (one is enough)│
-    │ GND     │ GND        │ Just one GND needed                 │
-    │ S0      │ D1 (GPIO5) │ Set HIGH in code (freq scaling)     │
-    │ S1      │ D2 (GPIO4) │ Set LOW in code (2% output)         │
-    │ S2      │ GND        │ ⚡ HARDWIRED to GND (red filter)    │
-    │ S3      │ GND        │ ⚡ HARDWIRED to GND (red filter)    │
-    │ OUT     │ D7 (GPIO13)│ Frequency output (pulse counting)   │
-    │ LED     │ (skip)     │ Not needed - LEDs powered by VCC    │
+    │ VCC     │ 3.3V       │ Powers module (use one VCC)         │
+    │ GND     │ GND        │ Common ground (use one GND)         │
+    │ S0      │ D1 (GPIO5) │ Frequency scaling HIGH              │
+    │ S1      │ D2 (GPIO4) │ Frequency scaling LOW (2%)          │
+    │ S2      │ D7 (GPIO13)│ Filter select bit 0 (RGB switching) │
+    │ S3      │ D4 (GPIO2) │ Filter select bit 1 (has pull-up)   │
+    │ OUT     │ D3 (GPIO0) │ Frequency output (pulse count)      │
+    │ LED     │ (skip)     │ LEDs powered by VCC automatically   │
     └─────────┴────────────┴─────────────────────────────────────┘
     
-    Total wires needed: 6 (VCC, GND, S0, S1, S2→GND, S3→GND, OUT)
+    Total wires: 8 (VCC, GND, S0, S1, S2, S3, OUT, + 2 for ultrasonic)
 ```
 
-> **⚠️ IMPORTANT:** S2 and S3 on the TCS3200 are connected directly to GND (not GPIO pins!).
-> This selects the RED photodiode filter permanently, simplifying detection and freeing 2 GPIO pins.
+> **✅ BOOT-SAFE Configuration**
+> - GPIO0 (D3/OUT) and GPIO2 (D4/S3) are configured AFTER boot
+> - During boot, these pins are not driven (INPUT/HIGH-Z or pulled up)
+> - GPIO0 is INPUT after boot = safe for frequency pulses
+> - GPIO2 has internal pull-up = safe for OUTPUT after boot
+> - NO GPIO15 used = eliminates boot failure risk!
 
 ### 2.3 Detailed Connections
 
@@ -296,10 +295,10 @@ adb install build/app/outputs/flutter-apk/app-release.apk
 |-------------|-------------|-------|
 | VCC | 5V (VIN) | Needs 5V power |
 | TRIG | D5 (GPIO14) | ✅ Safe GPIO - Trigger pulse output |
-| ECHO | D6 (GPIO12) | ✅ Safe GPIO - Echo pulse input |
+| ECHO | D6 (GPIO12) | ✅ Safe GPIO - Reliable, no boot issues |
 | GND | GND | Common ground |
 
-#### TCS3200 Color Sensor (10-Pin Module - Simplified for RED Detection)
+#### TCS3200 Color Sensor (10-Pin Module - Full RGB for Brown Detection)
 
 Your module has this pin layout:
 ```
@@ -309,22 +308,22 @@ Row 2: VCC  S1   S0   LED  GND
 
 | TCS3200 Pin | Connection | Notes |
 |-------------|------------|-------|
-| VCC | 3.3V | Powers module + LEDs (only one VCC needed) |
+| VCC | 3.3V | Powers module (only one VCC needed) |
 | GND | GND | Only one GND needed (internally connected) |
 | S0 | D1 (GPIO5) | ✅ Safe GPIO - Set HIGH (freq scaling) |
 | S1 | D2 (GPIO4) | ✅ Safe GPIO - Set LOW (2% output) |
-| **S2** | **GND** | ⚡ **HARDWIRED** - Selects RED filter |
-| **S3** | **GND** | ⚡ **HARDWIRED** - Selects RED filter |
-| OUT | D7 (GPIO13) | ✅ Safe GPIO - Frequency output |
+| **S2** | **D7 (GPIO13)** | ✅ Safe GPIO - Filter bit 0 (switches RGB) |
+| **S3** | **D4 (GPIO2)** | ✅ Safe after boot - Filter bit 1 (has pull-up) |
+| OUT | D3 (GPIO0) | ✅ Safe after boot - Frequency input |
 | LED | *Not connected* | LEDs already powered by VCC on most modules |
 
 > **💡 Tip:** The dual VCC/GND pins are internally connected - you only need to wire **one of each**. The LED pin is typically not needed since the onboard LEDs turn on automatically with VCC.
 
-> **Why hardwire S2/S3 to GND?**
-> - S2=LOW, S3=LOW permanently selects the RED photodiode filter
-> - Avoids boot-critical pins (GPIO0, GPIO2, GPIO15)
-> - Simplifies code (no need to switch color channels)
-> - Use **red/orange colored kibble** for reliable detection
+> **✅ Boot-Safe Design:**
+> - GPIO0 (D3/OUT) is configured as INPUT after boot = safe for pulses
+> - GPIO2 (D4/S3) has internal pull-up, configured as OUTPUT after boot = safe
+> - Pins are not driven during boot sequence
+> - No GPIO15 used = eliminates boot failure risk!
 
 #### Status LED
 | LED | ESP8266 Pin | Notes |
@@ -335,15 +334,16 @@ Row 2: VCC  S1   S0   LED  GND
 #### GPIO Pin Summary
 | GPIO | NodeMCU | Usage | Boot Safe? |
 |------|---------|-------|------------|
-| GPIO14 | D5 | Ultrasonic TRIG | ✅ Yes |
-| GPIO12 | D6 | Ultrasonic ECHO | ✅ Yes |
-| GPIO5 | D1 | Color S0 | ✅ Yes |
-| GPIO4 | D2 | Color S1 | ✅ Yes |
-| GPIO13 | D7 | Color OUT | ✅ Yes |
-| GPIO16 | D0 | Status LED | ✅ Yes (limited) |
-| GPIO0 | D3 | **NOT USED** | ❌ Boot pin |
-| GPIO2 | D4 | **NOT USED** | ❌ Boot pin |
-| GPIO15 | D8 | **NOT USED** | ❌ Boot pin |
+| GPIO14 | D5 | Ultrasonic TRIG | ✅ Fully safe |
+| GPIO12 | D6 | Ultrasonic ECHO | ✅ Fully safe |
+| GPIO5 | D1 | Color S0 | ✅ Fully safe |
+| GPIO4 | D2 | Color S1 | ✅ Fully safe |
+| GPIO13 | D7 | Color S2 | ✅ Fully safe |
+| GPIO2 | D4 | Color S3 | ✅ Safe after boot (has pull-up) |
+| GPIO0 | D3 | Color OUT | ✅ Safe after boot (INPUT mode) |
+| GPIO16 | D0 | Status LED | ✅ Fully safe (output only) |
+| GPIO15 | D8 | **NOT USED** | ❌ Boot LOW required |
+| GPIO1/3 | TX/RX | **NOT USED** | ❌ Serial debug |
 
 ### 2.4 Physical Placement
 

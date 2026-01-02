@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'color_calibration.dart';
 
 /// Represents one of the 4 shelter monitoring nodes (W, X, Y, Z).
 /// Each node monitors a single bowl/feeding station.
@@ -17,6 +18,7 @@ class ShelterNode {
   final bool isOnline;
   final ColorReading? lastColorReading;
   final double? ultrasonicDistanceCm;
+  final ColorCalibration? currentCalibration;
 
   ShelterNode({
     required this.nodeId,
@@ -33,6 +35,7 @@ class ShelterNode {
     this.isOnline = false,
     this.lastColorReading,
     this.ultrasonicDistanceCm,
+    this.currentCalibration,
   }) : displayName = displayName ?? 'Bowl $nodeId';
 
   /// Create a copy with updated fields
@@ -51,6 +54,7 @@ class ShelterNode {
     bool? isOnline,
     ColorReading? lastColorReading,
     double? ultrasonicDistanceCm,
+    ColorCalibration? currentCalibration,
   }) {
     return ShelterNode(
       nodeId: nodeId ?? this.nodeId,
@@ -67,6 +71,7 @@ class ShelterNode {
       isOnline: isOnline ?? this.isOnline,
       lastColorReading: lastColorReading ?? this.lastColorReading,
       ultrasonicDistanceCm: ultrasonicDistanceCm ?? this.ultrasonicDistanceCm,
+      currentCalibration: currentCalibration ?? this.currentCalibration,
     );
   }
 
@@ -170,7 +175,7 @@ class ShelterNode {
 /// Plate status for a bowl
 enum PlateStatus {
   filled,    // Brown food detected
-  empty,     // No food detected (not brown)
+  empty,     // No brown food detected
   unknown;   // No reading yet
 
   static PlateStatus fromString(String? value) {
@@ -214,12 +219,12 @@ enum SignalStrength {
 }
 
 /// Color sensor reading from TCS3200
-/// red field now stores the raw pulse count (not RGB)
+/// Full RGB values for brown food detection
 class ColorReading {
-  final int red;      // Raw pulse count from sensor
-  final int green;    // Unused in simplified mode (always 0)
-  final int blue;     // Unused in simplified mode (always 0)
-  final bool isBrown; // True if food detected (any type)
+  final int red;      // Red channel pulse count
+  final int green;    // Green channel pulse count
+  final int blue;     // Blue channel pulse count
+  final bool isBrown; // True if brown food detected
 
   ColorReading({
     required this.red,
@@ -228,16 +233,44 @@ class ColorReading {
     required this.isBrown,
   });
 
-  /// Thresholds matching ESP8266 config.h
-  static const int emptyThreshold = 200;
-  static const int redMinThreshold = 200;
-  static const int redMaxThreshold = 600;
+  /// Thresholds matching ESP8266 config.h (20% frequency, real calibration)
+  static const int brownRedMin = 200;
+  static const int brownRedMax = 1200;
+  static const int brownGreenMin = 150;
+  static const int brownGreenMax = 1000;
+  static const int brownBlueMin = 100;
+  static const int brownBlueMax = 950;
+  static const int darkThreshold = 150;
+  static const double greenRedRatioMin = 0.65;
+  static const double greenRedRatioMax = 1.0;
 
-  /// Returns the food detection type for UI warnings
+  /// Returns the food detection type for UI
   FoodDetectionType get foodType {
-    if (red <= emptyThreshold) return FoodDetectionType.empty;
-    if (red > redMinThreshold && red < redMaxThreshold) return FoodDetectionType.red;
-    return FoodDetectionType.white; // Demo mode (bright surface)
+    // Check if too dark (empty)
+    if (red < darkThreshold || green < darkThreshold) {
+      return FoodDetectionType.empty;
+    }
+    
+    // Check if blue exceeds red or green (not brown - blue tint)
+    if (blue > green || blue > red) {
+      return FoodDetectionType.other;
+    }
+    
+    // Check if values are in brown range
+    if (red >= brownRedMin && red <= brownRedMax &&
+        green >= brownGreenMin && green <= brownGreenMax &&
+        blue >= brownBlueMin && blue <= brownBlueMax) {
+      // Check green/red ratio
+      if (red > 0) {
+        double grRatio = green / red;
+        if (grRatio >= greenRedRatioMin && grRatio <= greenRedRatioMax) {
+          return FoodDetectionType.brown;
+        }
+      }
+    }
+    
+    // Not brown - could be other food or non-food
+    return FoodDetectionType.other;
   }
 
   Map<String, dynamic> toMap() {
@@ -264,11 +297,11 @@ class ColorReading {
   }
 }
 
-/// Food detection type for UI warnings
+/// Food detection type for UI
 enum FoodDetectionType {
   empty,  // Dark surface - no food
-  red,    // Red/colored food detected
-  white,  // White/bright surface - demo mode
+  brown,  // Brown food detected (correct)
+  other,  // Other color - not brown food
 }
 
 /// Routing candidate for multi-hop decisions

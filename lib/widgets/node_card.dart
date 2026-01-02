@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../models/shelter_node.dart';
 import '../../config/theme.dart';
+import '../../screens/shelter/calibration_screen.dart';
 
 /// Card widget displaying status for a single shelter node/bowl
 class NodeCard extends StatelessWidget {
@@ -39,19 +40,19 @@ class NodeCard extends StatelessWidget {
           children: [
             // Header: Node ID + Online Status
             _buildHeader(context),
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
             
             // Plate Status
             _buildPlateStatus(context),
-            const SizedBox(height: 10),
+            const SizedBox(height: 6),
             
             // Cat Presence
             _buildCatPresence(context),
-            const SizedBox(height: 10),
+            const SizedBox(height: 6),
             
             // Battery
             _buildBattery(context),
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             
             // Network Info
             _buildNetworkInfo(context),
@@ -67,48 +68,64 @@ class NodeCard extends StatelessWidget {
   
   Widget _buildHeader(BuildContext context) {
     return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        // Node ID with icon
-        Expanded(
-          child: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: AppTheme.primaryColor.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  node.nodeId,
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.bold,
-                    color: AppTheme.primaryColor,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Flexible(
-                child: Text(
-                  node.displayName,
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
+        // Node ID
+        Container(
+          padding: const EdgeInsets.all(5),
+          decoration: BoxDecoration(
+            color: AppTheme.primaryColor.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Text(
+            node.nodeId,
+            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+              fontWeight: FontWeight.bold,
+              color: AppTheme.primaryColor,
+            ),
           ),
         ),
-        const SizedBox(width: 8),
+        const SizedBox(width: 4),
+        // Display name
+        Expanded(
+          child: Text(
+            node.displayName,
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        // Calibration button
+        IconButton(
+          icon: Icon(
+            Icons.tune,
+            color: node.currentCalibration != null 
+                ? AppTheme.primaryColor 
+                : Colors.grey.shade400,
+            size: 14,
+          ),
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+          tooltip: node.currentCalibration != null 
+              ? 'Calibrated: ${node.currentCalibration!.colorName}'
+              : 'Calibrate',
+          onPressed: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (context) => CalibrationScreen(node: node),
+              ),
+            );
+          },
+        ),
+        const SizedBox(width: 2),
         // Online indicator
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
           decoration: BoxDecoration(
             color: node.isOnline 
                 ? AppTheme.successColor.withOpacity(0.1)
                 : Colors.grey.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(10),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
@@ -151,11 +168,12 @@ class NodeCard extends StatelessWidget {
         // Add warning based on detection type
         if (node.lastColorReading != null) {
           final foodType = node.lastColorReading!.foodType;
-          if (foodType == FoodDetectionType.white) {
-            warningText = '⚠️ Demo: bright surface detected';
-            color = AppTheme.warningColor; // Orange for demo
-          } else if (foodType == FoodDetectionType.red) {
-            warningText = 'ℹ️ Red/colored food detected';
+          final calibrationName = node.currentCalibration?.colorName ?? 'brown';
+          if (foodType == FoodDetectionType.other) {
+            warningText = '⚠️ Warning: Non-$calibrationName food detected';
+            color = AppTheme.warningColor; // Orange for non-match
+          } else if (foodType == FoodDetectionType.brown) {
+            warningText = '✓ $calibrationName food confirmed';
           }
         }
         break;
@@ -163,7 +181,8 @@ class NodeCard extends StatelessWidget {
         icon = Icons.warning_rounded;
         color = AppTheme.warningColor;
         label = 'Empty!';
-        warningText = 'Dark surface = empty';
+        final calibrationName = node.currentCalibration?.colorName ?? 'brown';
+        warningText = 'No $calibrationName food detected';
         break;
       default:
         icon = Icons.help_outline;

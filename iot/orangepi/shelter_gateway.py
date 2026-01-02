@@ -109,6 +109,9 @@ class ShelterMonitoringGateway:
             self.db = firestore.client()
             logger.info("✅ Firebase initialized successfully")
             
+            # Start listening for calibration updates
+            self._start_calibration_listeners()
+            
         except Exception as e:
             logger.error(f"❌ Firebase initialization failed: {e}")
             self.db = None
@@ -248,6 +251,9 @@ class ShelterMonitoringGateway:
         battery = payload.get("battery", {})
         network = payload.get("network", {})
         
+        # Check if this is the first telemetry from this node
+        was_offline = not self.node_status.get(node_id, {}).get('online', False)
+        
         # Update local tracking
         self.node_status[node_id] = {
             'last_seen': datetime.now(),
@@ -256,6 +262,11 @@ class ShelterMonitoringGateway:
             'plate_status': color.get('plateStatus', 'unknown'),
             'cat_present': ultrasonic.get('catPresent', False)
         }
+        
+        # If node just came online, send calibration
+        if was_offline:
+            logger.info(f"✅ Node {node_id} came online, sending calibration...")
+            self._send_calibration_to_node(node_id)
         
         # Log details
         logger.info(f"   Ultrasonic: {ultrasonic.get('distanceCm', '?')}cm, Cat: {ultrasonic.get('catPresent', '?')}")
@@ -370,6 +381,75 @@ class ShelterMonitoringGateway:
         rssi = payload.get("rssi", -100)
         
         logger.debug(f"📡 Neighbor beacon: Node {node_id}, Battery {battery}%, RSSI {rssi}")
+    
+    def _send_calibration_to_node(self, node_id):
+        """Send stored calibration to a node (called when node comes online)"""
+        if not self.db:
+            return
+        
+        try:
+            calibration_ref = (
+                self.db.collection('shelter')
+                .document('nodes')
+                .collection(node_id)
+                .document('calibration')
+            )
+            
+            calibration_doc = calibration_ref.get()
+            if calibration_doc.exists:
+                calibration_data = calibration_doc.to_dict()
+                self._forward_calibration_to_mqtt(node_id, calibration_data)
+                logger.info(f"📤 Sent stored calibration to newly connected node {node_id}")
+        except Exception as e:
+            logger.error(f"❌ Failed to send calibration to {node_id}: {e}")
+    
+    def _start_calibration_listeners(self):
+        """Start Firebase listeners for calibration updates"""
+        if not self.db:
+            return
+        
+        logger.info("📡 Setting up calibration listeners for all nodes")
+        
+        for node_id in NODE_IDS:
+            try:
+                # Watch: shelter/nodes/{nodeId}/calibration
+                calibration_ref = (
+                    self.db.collection('shelter')
+                    .document('nodes')
+                    .collection(node_id)
+                    .document('calibration')
+                )
+                
+                # Create callback for this specific node
+                def make_callback(node_id):
+                    def on_snapshot(doc_snapshot, changes, read_time):
+                        for doc in doc_snapshot:
+                            if doc.exists:
+                                self._forward_calibration_to_mqtt(node_id, doc.to_dict())
+                    return on_snapshot
+                
+                # Watch for changes
+                calibration_ref.on_snapshot(make_callback(node_id))
+                logger.info(f"✅ Calibration listener active for node {node_id}")
+                
+            except Exception as e:
+                logger.error(f"❌ Failed to setup calibration listener for {node_id}: {e}")
+    
+    def _forward_calibration_to_mqtt(self, node_id, calibration_data):
+        """Forward calibration from Firebase to MQTT"""
+        try:
+            # Remove timestamp if present (not needed for ESP8266)
+            if 'timestamp' in calibration_data:
+                del calibration_data['timestamp']
+            
+            topic = f"shelter/node/{node_id}/config/calibration"
+            payload = json.dumps(calibration_data)
+            
+            self.mqtt_client.publish(topic, payload, qos=1)
+            logger.info(f"📤 Forwarded calibration to {node_id}: {calibration_data.get('colorName', 'unknown')}")
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to forward calibration to {node_id}: {e}")
     
     # ========================================================================
     # NOTIFICATIONS

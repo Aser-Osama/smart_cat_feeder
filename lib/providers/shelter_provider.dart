@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/shelter_node.dart';
 import '../models/alert.dart';
+import '../models/color_calibration.dart';
 import '../services/firebase_service.dart';
 
 /// Provider for shelter monitoring state and operations.
@@ -220,9 +221,33 @@ class ShelterProvider with ChangeNotifier {
             .doc(nodeId);
         
         _nodeListeners[nodeId] = nodeRef.snapshots().listen(
-          (snapshot) {
+          (snapshot) async {
             if (snapshot.exists) {
-              _nodes[nodeId] = ShelterNode.fromFirestore(snapshot);
+              var node = ShelterNode.fromFirestore(snapshot);
+              
+              // Load calibration for this node
+              try {
+                final calibrationDoc = await firestore
+                    .collection('shelter')
+                    .doc('nodes')
+                    .collection(nodeId)
+                    .doc('calibration')
+                    .get();
+                
+                if (calibrationDoc.exists) {
+                  final calibrationData = calibrationDoc.data();
+                  if (calibrationData != null) {
+                    node = node.copyWith(
+                      currentCalibration: ColorCalibration.fromJson(calibrationData),
+                    );
+                    debugPrint('📐 Node $nodeId calibration loaded: ${calibrationData['colorName']}');
+                  }
+                }
+              } catch (e) {
+                debugPrint('⚠️ Failed to load calibration for node $nodeId: $e');
+              }
+              
+              _nodes[nodeId] = node;
               debugPrint('📡 Node $nodeId updated');
               notifyListeners();
             }
@@ -383,6 +408,31 @@ class ShelterProvider with ChangeNotifier {
     final online = _nodes.values.where((n) => n.isOnline).toList();
     if (online.isEmpty) return 0;
     return online.fold(0.0, (sum, n) => sum + n.batteryPercent) / online.length;
+  }
+  
+  /// Calibrate node color detection
+  /// Sends calibration data to Firebase which triggers gateway to forward to MQTT
+  Future<void> calibrateNodeColor(String nodeId, ColorCalibration calibration) async {
+    try {
+      debugPrint('📡 Calibrating node $nodeId with ${calibration.colorName}');
+      
+      // Write calibration to Firebase at: shelter/nodes/{nodeId}/calibration
+      // Gateway will listen to this and forward to MQTT: shelter/node/{nodeId}/config/calibration
+      await FirebaseFirestore.instance
+          .collection('shelter')
+          .doc('nodes')
+          .collection(nodeId)
+          .doc('calibration')
+          .set({
+            ...calibration.toJson(),
+            'timestamp': FieldValue.serverTimestamp(),
+          });
+      
+      debugPrint('✅ Calibration saved to Firebase for node $nodeId');
+    } catch (e) {
+      debugPrint('❌ Failed to calibrate node $nodeId: $e');
+      rethrow;
+    }
   }
   
   /// Refresh data

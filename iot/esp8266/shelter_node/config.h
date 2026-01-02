@@ -12,7 +12,7 @@
 // ============================================================================
 // NODE IDENTITY - CHANGE THIS FOR EACH NODE
 // ============================================================================
-#define NODE_ID 'X'  // Change to 'X', 'Y', or 'Z' for other nodes
+#define NODE_ID 'Y'  // Change to 'W', 'X', 'Y', or 'Z' for other nodes
 
 // ============================================================================
 // MULTI-HOP DEMO MODE
@@ -71,27 +71,32 @@ const int   MQTT_PORT     = 1883;
 
 // Ultrasonic Sensor (HC-SR04) - ACTIVE HIGH trigger pulse
 #define ULTRASONIC_TRIG_PIN  14  // D5 - Safe GPIO
-#define ULTRASONIC_ECHO_PIN  12  // D6 - Safe GPIO
+#define ULTRASONIC_ECHO_PIN  12  // D6 - Safe GPIO (reliable, no boot issues)
 
-// Color Sensor (TCS3200/HW-531) - SIMPLIFIED for RED detection
+// Color Sensor (TCS3200/HW-531) - FULL RGB for BROWN detection
 // -------------------------------------------------------------------------
-// WIRING SIMPLIFICATION: Detect RED food (kibble) instead of brown!
-// Hardwire S2 and S3 to GND = Red filter permanently selected
-// This saves 2 GPIO pins and simplifies code.
+// BROWN FOOD DETECTION: Properly detect brown cat food using RGB channels
+// Brown = low-medium red, low-medium green, very low blue
+// All 5 control pins needed for full RGB reading
 //
-// HARDWARE WIRING:
-//   S2 -> GND (hardwired, no GPIO needed)
-//   S3 -> GND (hardwired, no GPIO needed)
+// HARDWARE WIRING (BOOT-SAFE GPIO ONLY - NO GPIO15!):
 //   S0 -> D1 (GPIO5)  - Frequency scaling HIGH
-//   S1 -> D2 (GPIO4)  - Frequency scaling LOW = 2% duty cycle
-//   OUT-> D7 (GPIO13) - Frequency output
+//   S1 -> D2 (GPIO4)  - Frequency scaling HIGH = 20% duty cycle
+//   S2 -> D7 (GPIO13) - Filter select bit 0
+//   S3 -> D4 (GPIO2)  - Filter select bit 1 (has pull-up, OK for OUTPUT)
+//   OUT-> D3 (GPIO0)  - Frequency output (OK after boot)
 //   VCC-> 3.3V
 //   GND-> GND
+//
+// NOTE: GPIO0 (OUT) and GPIO2 (S3) are used as OUTPUT after boot - safe!
+// GPIO0 must be HIGH at boot (not driven during boot, INPUT)
+// GPIO2 must be HIGH at boot (has pull-up, not driven during boot)
 // -------------------------------------------------------------------------
 #define COLOR_S0_PIN         5   // D1 - Safe - Frequency scaling (HIGH)
 #define COLOR_S1_PIN         4   // D2 - Safe - Frequency scaling (LOW for 2%)
-#define COLOR_OUT_PIN        13  // D7 - Safe - Frequency output
-// S2/S3 hardwired to GND - no GPIO pins needed!
+#define COLOR_S2_PIN         13  // D7 - Safe - Filter select S2
+#define COLOR_S3_PIN         2   // D4 - GPIO2 - OUTPUT after boot (has pull-up, safe)
+#define COLOR_OUT_PIN        0   // D3 - GPIO0 - INPUT after boot (OK, just don't pull LOW)
 
 // Status LED
 #define STATUS_LED_PIN       16  // D0 - Works for OUTPUT only (no PWM, no INPUT_PULLUP)
@@ -104,23 +109,29 @@ const int   MQTT_PORT     = 1883;
 #define ULTRASONIC_MAX_DISTANCE_CM  400.0  // Max sensor range
 #define ULTRASONIC_MIN_DISTANCE_CM  2.0    // Min sensor range
 
-// Color sensor - Food detection (simplified RED-only mode)
+// Color sensor - Brown food detection (full RGB mode)
 // -------------------------------------------------------------------------
-// Detection logic: DARK = EMPTY, LIGHT = FOOD
-// - Low pulse count = dark surface (absorbs light) = EMPTY plate
-// - High pulse count = light/white surface = FOOD PRESENT (demo mode)
-// - Middle pulse count = red/colored surface = FOOD PRESENT (red detected)
+// Detection logic using RGB channels to detect brown cat food
+// Brown characteristics (calibrated for 20% frequency with actual readings):
+// - Red: 200-1200 (medium-high red component)
+// - Green: 150-1000 (medium-high green component)  
+// - Blue: 100-950 (medium, but MUST be <= green for brown)
+// - Green/Red ratio: 0.65-1.0 (brown has slightly more red than green)
+// - Blue must NOT exceed green (key brown indicator)
 //
-// This inverted logic works because:
-// - Empty metal/dark bowl absorbs light → low pulses
-// - Food (kibble, lighter colored) reflects more light → higher pulses
+// Empty plate detection:
+// - Any channel below 150 = very dark surface = empty
+// - OR blue > green (glossy/blue tint) = not brown
 // -------------------------------------------------------------------------
-#define COLOR_EMPTY_THRESHOLD        200  // Below this = DARK = EMPTY
-#define COLOR_RED_MIN_THRESHOLD      200  // Red food range starts here  
-#define COLOR_RED_MAX_THRESHOLD      600  // Red food range ends here
-// Food detected when: pulseCount > EMPTY_THRESHOLD
-// Red food when: RED_MIN < pulseCount < RED_MAX
-// White/demo food when: pulseCount >= RED_MAX
+#define COLOR_BROWN_RED_MIN          200   // Min red for brown food
+#define COLOR_BROWN_RED_MAX          1200  // Max red for brown food
+#define COLOR_BROWN_GREEN_MIN        150   // Min green for brown food
+#define COLOR_BROWN_GREEN_MAX        1000  // Max green for brown food
+#define COLOR_BROWN_BLUE_MIN         100   // Min blue for brown food
+#define COLOR_BROWN_BLUE_MAX         950   // Max blue for brown food (but must be < green)
+#define COLOR_DARK_THRESHOLD         150   // Below this = too dark = empty
+#define COLOR_GREEN_RED_RATIO_MIN    0.65  // Min green/red ratio for brown
+#define COLOR_GREEN_RED_RATIO_MAX    1.0   // Max green/red ratio for brown
 
 // ============================================================================
 // TIMING CONFIGURATION
@@ -192,9 +203,9 @@ const int   MQTT_PORT     = 1883;
 // DEBUG FLAGS
 // ============================================================================
 // MASTER DEBUG SWITCH - Set to 0 for production/reliability, 1 for debugging
-#define DEBUG_LOGGING              0       // 0=minimal logs (reliable), 1=verbose logs
+#define DEBUG_LOGGING              1       // 0=minimal logs (reliable), 1=verbose logs
 
-#define DEBUG_SENSORS              0
+#define DEBUG_SENSORS              1
 #define DEBUG_ROUTING              0
 #define DEBUG_BATTERY              0
 #define DEBUG_MQTT                 0

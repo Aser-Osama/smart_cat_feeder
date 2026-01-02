@@ -27,6 +27,7 @@
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
+#include <EEPROM.h>
 
 #include "config.h"
 #include "sensors.h"
@@ -71,17 +72,101 @@ bool lastCatPresent = false;
 bool lastPlateEmpty = false;
 bool emptyPlateAlertSent = false;
 
+// Runtime calibration (can be updated via MQTT)
+String foodColorName = "brown";  // User-defined color name
+int calibratedRedMin = COLOR_BROWN_RED_MIN;
+int calibratedRedMax = COLOR_BROWN_RED_MAX;
+int calibratedGreenMin = COLOR_BROWN_GREEN_MIN;
+int calibratedGreenMax = COLOR_BROWN_GREEN_MAX;
+int calibratedBlueMin = COLOR_BROWN_BLUE_MIN;
+int calibratedBlueMax = COLOR_BROWN_BLUE_MAX;
+int calibratedDarkThreshold = COLOR_DARK_THRESHOLD;
+float calibratedGreenRedRatioMin = COLOR_GREEN_RED_RATIO_MIN;
+float calibratedGreenRedRatioMax = COLOR_GREEN_RED_RATIO_MAX;
+
 // MQTT topics (built dynamically)
 String topicTelemetry;
 String topicRouting;
 String topicAlert;
+String topicCalibration;
 
 // User ID for Firebase integration (matches gateway)
 const char* USER_ID = "EyrwFFoBJ8TlVFepJvqdeooOBwA2";
 
+// EEPROM addresses for calibration persistence
+#define EEPROM_SIZE 512
+#define EEPROM_CALIBRATION_ADDR 0
+#define EEPROM_MAGIC 0xCAFE  // Magic number to detect valid calibration
+
+struct CalibrationData {
+  uint16_t magic;  // Magic number for validation
+  char colorName[32];
+  int redMin;
+  int redMax;
+  int greenMin;
+  int greenMax;
+  int blueMin;
+  int blueMax;
+  int darkThreshold;
+  float greenRedRatioMin;
+  float greenRedRatioMax;
+};
+
 // ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
+
+void saveCalibrationToEEPROM() {
+  CalibrationData data;
+  data.magic = EEPROM_MAGIC;
+  strncpy(data.colorName, foodColorName.c_str(), 31);
+  data.colorName[31] = '\0';
+  data.redMin = calibratedRedMin;
+  data.redMax = calibratedRedMax;
+  data.greenMin = calibratedGreenMin;
+  data.greenMax = calibratedGreenMax;
+  data.blueMin = calibratedBlueMin;
+  data.blueMax = calibratedBlueMax;
+  data.darkThreshold = calibratedDarkThreshold;
+  data.greenRedRatioMin = calibratedGreenRedRatioMin;
+  data.greenRedRatioMax = calibratedGreenRedRatioMax;
+  
+  EEPROM.put(EEPROM_CALIBRATION_ADDR, data);
+  EEPROM.commit();
+  Serial.println("💾 Calibration saved to EEPROM");
+}
+
+void loadCalibrationFromEEPROM() {
+  CalibrationData data;
+  EEPROM.get(EEPROM_CALIBRATION_ADDR, data);
+  
+  if (data.magic == EEPROM_MAGIC) {
+    foodColorName = String(data.colorName);
+    calibratedRedMin = data.redMin;
+    calibratedRedMax = data.redMax;
+    calibratedGreenMin = data.greenMin;
+    calibratedGreenMax = data.greenMax;
+    calibratedBlueMin = data.blueMin;
+    calibratedBlueMax = data.blueMax;
+    calibratedDarkThreshold = data.darkThreshold;
+    calibratedGreenRedRatioMin = data.greenRedRatioMin;
+    calibratedGreenRedRatioMax = data.greenRedRatioMax;
+    
+    // Apply to sensor
+    sensors.updateCalibration(
+      calibratedRedMin, calibratedRedMax,
+      calibratedGreenMin, calibratedGreenMax,
+      calibratedBlueMin, calibratedBlueMax,
+      calibratedDarkThreshold,
+      calibratedGreenRedRatioMin, calibratedGreenRedRatioMax
+    );
+    
+    Serial.print("✅ Loaded calibration from EEPROM: ");
+    Serial.println(foodColorName);
+  } else {
+    Serial.println("ℹ️  No saved calibration found, using defaults");
+  }
+}
 
 #if ESPNOW_ENABLED && FORCE_MULTIHOP
 // Check if any ESP-NOW peer has sink access (for forced multi-hop mode)
@@ -134,16 +219,21 @@ void setup() {
   topicTelemetry = String(TOPIC_TELEMETRY_PREFIX) + nodeIdString + TOPIC_TELEMETRY_SUFFIX;
   topicRouting = String(TOPIC_TELEMETRY_PREFIX) + nodeIdString + TOPIC_ROUTING_SUFFIX;
   topicAlert = String(TOPIC_TELEMETRY_PREFIX) + nodeIdString + TOPIC_ALERT_SUFFIX;
+  topicCalibration = String(TOPIC_TELEMETRY_PREFIX) + nodeIdString + "/config/calibration";
   
   Serial.println();
   LOGLN("[INFO] MQTT Topics:");
   LOGF("   Telemetry: %s\n", topicTelemetry.c_str());
   LOGF("   Routing:   %s\n", topicRouting.c_str());
   LOGF("   Alert:     %s\n", topicAlert.c_str());
+  LOGF("   Calibration: %s\n", topicCalibration.c_str());
   
   // Initialize status LED
   pinMode(STATUS_LED_PIN, OUTPUT);
   digitalWrite(STATUS_LED_PIN, LOW);
+  
+  // Initialize EEPROM for calibration persistence
+  EEPROM.begin(EEPROM_SIZE);
   
   // Initialize components
   Serial.println();
@@ -151,6 +241,9 @@ void setup() {
   
   // Sensors
   sensors.begin();
+  
+  // Load calibration from EEPROM (if available)
+  loadCalibrationFromEEPROM();
   
   // Battery simulator with randomized initial percentage
   float initialBattery = INITIAL_BATTERY_PERCENT + random(-20, 15);
@@ -253,7 +346,10 @@ void connectMQTT() {
       mqttClient.subscribe(TOPIC_MESH_FORWARD);
       mqttClient.subscribe(TOPIC_BROADCAST_CONFIG);
       
-      LOGLN("   Subscribed to mesh and config topics");
+      // Subscribe to calibration topic
+      mqttClient.subscribe(topicCalibration.c_str());
+      
+      LOGLN("   Subscribed to mesh, config, and calibration topics");
       
       // Send initial presence announcement
       sendNeighborBeacon();
@@ -298,6 +394,10 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   // Handle config broadcasts
   else if (strcmp(topic, TOPIC_BROADCAST_CONFIG) == 0) {
     handleConfigUpdate(message);
+  }
+  // Handle calibration updates
+  else if (strcmp(topic, topicCalibration.c_str()) == 0) {
+    handleCalibrationUpdate(message);
   }
 }
 
@@ -358,6 +458,51 @@ void handleConfigUpdate(const char* message) {
     LOGLN("[CONFIG] Config update received (brown threshold)");
     // Could update thresholds dynamically here
   }
+}
+
+void handleCalibrationUpdate(const char* message) {
+  StaticJsonDocument<512> doc;
+  DeserializationError error = deserializeJson(doc, message);
+  
+  if (error) {
+    LOGF("[ERROR] Calibration JSON parse error: %s\n", error.c_str());
+    return;
+  }
+  
+  // Update color name
+  if (doc.containsKey("colorName")) {
+    foodColorName = doc["colorName"].as<String>();
+  }
+  
+  // Update thresholds
+  if (doc.containsKey("redMin")) calibratedRedMin = doc["redMin"];
+  if (doc.containsKey("redMax")) calibratedRedMax = doc["redMax"];
+  if (doc.containsKey("greenMin")) calibratedGreenMin = doc["greenMin"];
+  if (doc.containsKey("greenMax")) calibratedGreenMax = doc["greenMax"];
+  if (doc.containsKey("blueMin")) calibratedBlueMin = doc["blueMin"];
+  if (doc.containsKey("blueMax")) calibratedBlueMax = doc["blueMax"];
+  if (doc.containsKey("darkThreshold")) calibratedDarkThreshold = doc["darkThreshold"];
+  if (doc.containsKey("greenRedRatioMin")) calibratedGreenRedRatioMin = doc["greenRedRatioMin"];
+  if (doc.containsKey("greenRedRatioMax")) calibratedGreenRedRatioMax = doc["greenRedRatioMax"];
+  
+  LOG_CRITICAL("[CALIBRATION] Updated color detection:\n");
+  LOGF("  Color: %s\n", foodColorName.c_str());
+  LOGF("  Red: %d-%d\n", calibratedRedMin, calibratedRedMax);
+  LOGF("  Green: %d-%d\n", calibratedGreenMin, calibratedGreenMax);
+  LOGF("  Blue: %d-%d\n", calibratedBlueMin, calibratedBlueMax);
+  LOGF("  Dark threshold: %d\n", calibratedDarkThreshold);
+  
+  // Update sensor manager thresholds
+  sensors.updateCalibration(
+    calibratedRedMin, calibratedRedMax,
+    calibratedGreenMin, calibratedGreenMax,
+    calibratedBlueMin, calibratedBlueMax,
+    calibratedDarkThreshold,
+    calibratedGreenRedRatioMin, calibratedGreenRedRatioMax
+  );
+  
+  // Save to EEPROM for persistence across reboots
+  saveCalibrationToEEPROM();
 }
 
 // ============================================================================

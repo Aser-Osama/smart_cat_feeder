@@ -5,7 +5,22 @@ service cloud.firestore {
     match /users/{userId} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
       
-      // Subcollections under user
+      // Node data subcollections
+      match /nodes/{nodeId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+      
+      // Alerts subcollection
+      match /alerts/{alertId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+      
+      // Routing logs subcollection
+      match /routing_logs/{logId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+      
+      // Legacy subcollections
       match /feeding_logs/{logId} {
         allow read, write: if request.auth != null && request.auth.uid == userId;
       }
@@ -22,6 +37,13 @@ service cloud.firestore {
         allow read, write: if request.auth != null && request.auth.uid == userId;
       }
     }
+    
+    // Shelter monitoring node calibration data
+    match /shelter/nodes/{nodeId}/calibration {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
   }
 }
+
 

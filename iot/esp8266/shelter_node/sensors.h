@@ -48,7 +48,7 @@ public:
     pinMode(ULTRASONIC_TRIG_PIN, OUTPUT);
     pinMode(ULTRASONIC_ECHO_PIN, INPUT);
     digitalWrite(ULTRASONIC_TRIG_PIN, LOW);
-    LOGLN("  [Ultrasonic] Initialized on TRIG=D5, ECHO=D6");
+    LOGLN("  [Ultrasonic] Initialized on TRIG=D5(GPIO14), ECHO=D6(GPIO12)");
   }
 
   UltrasonicReading read() {
@@ -92,29 +92,45 @@ public:
 };
 
 // ============================================================================
-// COLOR SENSOR (TCS3200 / HW-531) - SIMPLIFIED RED-ONLY DETECTION
+// COLOR SENSOR (TCS3200 / HW-531) - FULL RGB BROWN DETECTION
 // ============================================================================
 // 
-// Hardware simplification: S2 and S3 are hardwired to GND
-// This permanently selects the RED photodiode filter.
-// Only 3 GPIO pins needed: S0, S1, OUT
+// Hardware: Full RGB mode using all control pins
+// S2 and S3 control which photodiode filter is active
+// All 5 control pins needed: S0, S1, S2, S3, OUT
 //
-// Why RED instead of brown?
-// - Uses fewer GPIO pins (saves 2 pins!)
-// - Simpler detection logic (single threshold)
-// - Many cat foods have red/orange tint
-// - Use red-colored kibble or red bowl marker
+// Brown detection:
+// - Reads all three RGB channels sequentially
+// - Brown = low-medium red, low-medium green, very low blue
+// - Validates color ratios to distinguish brown from other colors
 //
 // ============================================================================
 
 class ColorSensor {
 private:
-  int lastRawReading;
+  int lastRed, lastGreen, lastBlue;
   
-  // Read pulse count from RED filter (S2/S3 hardwired LOW)
-  // Lower count = more red light = food present
-  // Higher count = less red light = empty plate
-  int readRedPulseCount() {
+  // Runtime calibration thresholds
+  int redMin, redMax;
+  int greenMin, greenMax;
+  int blueMin, blueMax;
+  int darkThreshold;
+  float greenRedRatioMin, greenRedRatioMax;
+  
+  // Read pulse count for a specific color filter
+  // filterS2, filterS3: control which photodiode (R, G, B, Clear)
+  // Red:   S2=LOW,  S3=LOW
+  // Green: S2=HIGH, S3=HIGH  
+  // Blue:  S2=LOW,  S3=HIGH
+  // Clear: S2=HIGH, S3=LOW
+  int readColorPulseCount(bool filterS2, bool filterS3) {
+    // Set filter selection
+    digitalWrite(COLOR_S2_PIN, filterS2 ? HIGH : LOW);
+    digitalWrite(COLOR_S3_PIN, filterS3 ? HIGH : LOW);
+    
+    // Small delay for filter to stabilize
+    delayMicroseconds(100);
+    
     unsigned long pulseCount = 0;
     const unsigned long sampleTimeUs = 50000; // 50ms sample time
     unsigned long startTime = micros();
@@ -132,85 +148,122 @@ private:
 
 public:
   void begin() {
-    // Only need 3 pins - S2/S3 are hardwired to GND
+    // Initialize all 5 control pins for full RGB
     pinMode(COLOR_S0_PIN, OUTPUT);
     pinMode(COLOR_S1_PIN, OUTPUT);
+    pinMode(COLOR_S2_PIN, OUTPUT);
+    pinMode(COLOR_S3_PIN, OUTPUT);
     pinMode(COLOR_OUT_PIN, INPUT);
 
-    // Set frequency scaling to 2% (S0=HIGH, S1=LOW)
-    // Low frequency is easier for ESP8266 to count reliably
+    // Set frequency scaling to 20% (S0=HIGH, S1=HIGH)
+    // 2% was too low - need higher frequency for readable pulse counts
     digitalWrite(COLOR_S0_PIN, HIGH);
-    digitalWrite(COLOR_S1_PIN, LOW);
+    digitalWrite(COLOR_S1_PIN, HIGH);
+    
+    // Initialize filter to red (S2=LOW, S3=LOW)
+    digitalWrite(COLOR_S2_PIN, LOW);
+    digitalWrite(COLOR_S3_PIN, LOW);
 
-    lastRawReading = 0;
+    lastRed = lastGreen = lastBlue = 0;
+    
+    // Initialize with default thresholds from config.h
+    redMin = COLOR_BROWN_RED_MIN;
+    redMax = COLOR_BROWN_RED_MAX;
+    greenMin = COLOR_BROWN_GREEN_MIN;
+    greenMax = COLOR_BROWN_GREEN_MAX;
+    blueMin = COLOR_BROWN_BLUE_MIN;
+    blueMax = COLOR_BROWN_BLUE_MAX;
+    darkThreshold = COLOR_DARK_THRESHOLD;
+    greenRedRatioMin = COLOR_GREEN_RED_RATIO_MIN;
+    greenRedRatioMax = COLOR_GREEN_RED_RATIO_MAX;
 
-    LOGLN("  [Color] TCS3200 initialized (RED-only mode)");
-    LOGLN("          S0=D1(GPIO5), S1=D2(GPIO4), OUT=D7(GPIO13)");
-    LOGLN("          S2/S3 hardwired to GND for red filter");
+    LOGLN("  [Color] TCS3200 initialized (Full RGB mode)");
+    LOGLN("          S0=D1(GPIO5), S1=D2(GPIO4), S2=D7(GPIO13), S3=D4(GPIO2), OUT=D3(GPIO0)");
+    LOGLN("          BROWN detection via RGB analysis");
+    LOGLN("          GPIO0/GPIO2 safe after boot as OUTPUT/INPUT");
   }
 
   ColorReading read() {
     ColorReading result;
     result.valid = true;
-    result.green = 0;  // Not measured in simplified mode
-    result.blue = 0;   // Not measured in simplified mode
 
-    // Read RED channel (only channel available with S2/S3 grounded)
-    lastRawReading = readRedPulseCount();
-    result.red = lastRawReading;
+    // Read all three RGB channels
+    // Red:   S2=LOW,  S3=LOW
+    // Green: S2=HIGH, S3=HIGH
+    // Blue:  S2=LOW,  S3=HIGH
+    lastRed = readColorPulseCount(false, false);   // Red
+    lastGreen = readColorPulseCount(true, true);   // Green
+    lastBlue = readColorPulseCount(false, true);   // Blue
+    
+    result.red = lastRed;
+    result.green = lastGreen;
+    result.blue = lastBlue;
 
-    // Determine if food is present (bright surface = food)
-    // Note: color.isBrown now means "food detected" (keeping field name for compatibility)
-    result.isBrown = isFoodPresent(lastRawReading);
+    // Determine if brown food is present
+    result.isBrown = isBrownFood(lastRed, lastGreen, lastBlue);
 
     #if DEBUG_SENSORS
-    const char* status = "UNKNOWN";
-    const char* type = "";
-    if (lastRawReading <= COLOR_EMPTY_THRESHOLD) {
-      status = "EMPTY (dark)";
-    } else if (isRedFood(lastRawReading)) {
-      status = "FOOD DETECTED";
-      type = " [RED]";
-    } else {
-      status = "FOOD DETECTED";
-      type = " [WHITE/demo]";
+    const char* status = result.isBrown ? "BROWN FOOD" : "NOT BROWN";
+    LOGF("[Color] R:%d G:%d B:%d = %s\n",
+                  lastRed, lastGreen, lastBlue, status);
+    if (result.isBrown) {
+      float grRatio = lastRed > 0 ? (float)lastGreen / (float)lastRed : 0;
+      LOGF("        G/R ratio: %.2f (target: %.1f-%.1f)\n",
+                    grRatio, COLOR_GREEN_RED_RATIO_MIN, COLOR_GREEN_RED_RATIO_MAX);
     }
-    LOGF("[Color] Pulses: %d = %s%s (empty<%d, red:%d-%d)\n",
-                  lastRawReading, status, type,
-                  COLOR_EMPTY_THRESHOLD, COLOR_RED_MIN_THRESHOLD, COLOR_RED_MAX_THRESHOLD);
     #endif
 
     return result;
   }
 
-  // Check if food is detected (any bright surface = food)
-  // NEW LOGIC: Dark = empty, Light = food
-  bool isFoodPresent(int pulseCount) {
-    // Food detected when pulse count is above the empty threshold
-    // (brighter surfaces = more reflection = food present)
-    return (pulseCount > COLOR_EMPTY_THRESHOLD);
+  // Check if the RGB values match calibrated food color characteristics
+  bool isBrownFood(int red, int green, int blue) {
+    // Check if any channel is too dark (empty plate)
+    if (red < darkThreshold || green < darkThreshold) {
+      return false;
+    }
+    
+    // Check if values are in calibrated color range
+    if (red < redMin || red > redMax) {
+      return false;
+    }
+    if (green < greenMin || green > greenMax) {
+      return false;
+    }
+    if (blue < blueMin || blue > blueMax) {
+      return false;
+    }
+    
+    // Check green/red ratio (validates color consistency)
+    if (red > 0) {
+      float greenRedRatio = (float)green / (float)red;
+      if (greenRedRatio < greenRedRatioMin || 
+          greenRedRatio > greenRedRatioMax) {
+        return false;
+      }
+    }
+    
+    return true;  // All checks passed - it's brown!
   }
   
-  // Check if detected food is in the RED range (for Flutter warning)
-  bool isRedFood(int pulseCount) {
-    return (pulseCount > COLOR_RED_MIN_THRESHOLD && 
-            pulseCount < COLOR_RED_MAX_THRESHOLD);
+  // Update calibration thresholds at runtime
+  void updateCalibration(int rMin, int rMax, int gMin, int gMax, int bMin, int bMax, 
+                         int darkT, float grMin, float grMax) {
+    redMin = rMin;
+    redMax = rMax;
+    greenMin = gMin;
+    greenMax = gMax;
+    blueMin = bMin;
+    blueMax = bMax;
+    darkThreshold = darkT;
+    greenRedRatioMin = grMin;
+    greenRedRatioMax = grMax;
   }
   
-  // Check if detected food is WHITE/bright (demo mode, for Flutter warning)
-  bool isWhiteFood(int pulseCount) {
-    return (pulseCount >= COLOR_RED_MAX_THRESHOLD);
-  }
-  
-  // Check if plate is empty (dark surface)
-  bool isPlateEmpty(int pulseCount) {
-    return (pulseCount <= COLOR_EMPTY_THRESHOLD);
-  }
-  
-  // Get raw reading for calibration
-  int getRawReading() {
-    return lastRawReading;
-  }
+  // Get raw readings for calibration
+  int getRedReading() { return lastRed; }
+  int getGreenReading() { return lastGreen; }
+  int getBlueReading() { return lastBlue; }
 };
 
 // ============================================================================
@@ -227,12 +280,13 @@ private:
 public:
   void begin() {
     LOGLN("[SENSOR] Initializing sensors...");
-    LOGLN("         Using SIMPLIFIED pin configuration:");
+    LOGLN("         Using FULL RGB pin configuration:");
     LOGLN("         - Ultrasonic: TRIG=D5(GPIO14), ECHO=D6(GPIO12)");
-    LOGLN("         - Color: S0=D1(GPIO5), S1=D2(GPIO4), OUT=D7(GPIO13)");
-    LOGLN("         - Color S2/S3 HARDWIRED to GND (red filter only)");
+    LOGLN("         - Color: S0=D1(GPIO5), S1=D2(GPIO4), S2=D7(GPIO13), S3=D4(GPIO2), OUT=D3(GPIO0)");
     LOGLN("         - Status LED: D0(GPIO16)");
-    LOGLN("         Total GPIO pins used: 6 (all safe pins!)");
+    LOGLN("         - GPIO0/GPIO2 safe after boot (not driven during boot)");
+    LOGLN("         Total GPIO pins used: 7 (BOOT-SAFE configuration!)");
+    LOGLN("         Detecting BROWN food via RGB analysis");
     ultrasonic.begin();
     color.begin();
     lastReadTime = 0;
@@ -246,12 +300,11 @@ public:
     // Read ultrasonic first (cat presence)
     data.ultrasonic = ultrasonic.read();
 
-    // Read color sensor (red food detection)
+    // Read color sensor (brown food detection)
     data.color = color.read();
 
     // Determine plate status
-    // Empty plate alert: food NOT detected AND cat NOT present
-    // Note: color.isBrown now means "red food detected"
+    // Empty plate alert: brown food NOT detected AND cat NOT present
     if (!data.ultrasonic.catPresent && !data.color.isBrown) {
       data.plateEmpty = true;
     } else {
@@ -272,9 +325,15 @@ public:
     return (millis() - lastReadTime) >= SENSOR_READ_INTERVAL_MS;
   }
   
-  // Get raw color reading for calibration
-  int getColorRawReading() {
-    return color.getRawReading();
+  // Get raw color readings for calibration
+  int getColorRedReading() { return color.getRedReading(); }
+  int getColorGreenReading() { return color.getGreenReading(); }
+  int getColorBlueReading() { return color.getBlueReading(); }
+
+  // Update calibration thresholds
+  void updateCalibration(int rMin, int rMax, int gMin, int gMax, int bMin, int bMax,
+                         int darkT, float grMin, float grMax) {
+    color.updateCalibration(rMin, rMax, gMin, gMax, bMin, bMax, darkT, grMin, grMax);
   }
 
   // Get plate status string
