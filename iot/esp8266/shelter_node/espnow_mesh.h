@@ -25,11 +25,22 @@ struct __attribute__((packed)) ESPNowDiscovery {
   uint8_t type;           // MSG_TYPE_DISCOVERY or MSG_TYPE_ACK
   char nodeId;            // 'W', 'X', 'Y', 'Z'
   float batteryPercent;   // For routing decisions
-  int8_t rssi;            // Sender's WiFi RSSI to sink
+  int8_t rssi;            // Sender's WiFi RSSI (to AP/gateway)
   uint8_t channel;        // Sender's channel (for verification)
+  uint8_t hasSinkAccess;  // 1 if sender has MQTT connectivity to gateway, 0 otherwise
+};
+
+// Data ACK message - confirms receipt of data message
+struct __attribute__((packed)) ESPNowDataAck {
+  uint8_t type;           // MSG_TYPE_DATA_ACK
+  char ackNode;           // Node sending the ACK  
+  char originNode;        // Original sender of data being ACKed
+  uint8_t seqNum;         // Sequence number being ACKed
+  uint8_t status;         // 1 = received & will forward, 0 = received but cannot forward
 };
 
 // Data message for forwarding telemetry/alerts
+// IMPORTANT: Keep payload size moderate (<=150 bytes) for ESP8266 ESP-NOW reliability
 struct __attribute__((packed)) ESPNowDataMsg {
   uint8_t type;           // MSG_TYPE_TELEMETRY, MSG_TYPE_ALERT, etc.
   char originNode;        // Original sender
@@ -39,7 +50,7 @@ struct __attribute__((packed)) ESPNowDataMsg {
   char visited[5];        // Nodes that have seen this (loop prevention)
   uint8_t visitedCount;
   uint8_t payloadLen;     // Length of payload
-  char payload[200];      // JSON payload (telemetry, alert, etc.)
+  char payload[150];      // JSON payload - reduced size for reliability
 };
 
 // ============================================================================
@@ -51,14 +62,18 @@ struct ESPNowPeer {
   char nodeId;
   uint8_t mac[6];
   float batteryPercent;
-  int8_t rssi;            // Their RSSI to sink
+  int8_t rssi;            // Their RSSI to WiFi AP
   int8_t peerRssi;        // Our RSSI to them (from ESP-NOW)
+  bool hasSinkAccess;     // Do they have MQTT connectivity to gateway?
   uint32_t lastSeen;
 };
 
 // ============================================================================
 // ESP-NOW MESH CLASS
 // ============================================================================
+
+// Message queue size - allows buffering multiple incoming messages
+#define ESPNOW_MSG_QUEUE_SIZE 4
 
 class ESPNowMesh {
 private:
@@ -75,16 +90,36 @@ private:
   uint32_t txOk;
   uint32_t txFail;
   uint32_t forwardCount;
+  uint32_t droppedCount;  // Messages dropped due to full queue
   
   // Message tracking
   uint8_t lastSeqNum;
-  uint8_t seenSeqNums[10];  // Ring buffer for dedup
-  uint8_t seenSeqIdx;
+  
+  // Improved deduplication: track origin+seq pairs
+  struct SeenMsg {
+    char origin;
+    uint8_t seq;
+    uint32_t timestamp;
+  };
+  SeenMsg seenMsgs[16];     // Larger buffer for better dedup
+  uint8_t seenMsgIdx;
+  
+  // Data ACK tracking
+  volatile bool waitingForDataAck;
+  volatile bool dataAckReceived;
+  char pendingAckOrigin;
+  uint8_t pendingAckSeq;
   
   // Deferred operations (can't send in callback)
   volatile bool needAck;
   uint8_t ackMac[6];
   char ackNodeId;
+  
+  // Deferred data ACK
+  volatile bool needDataAck;
+  uint8_t dataAckMac[6];
+  char dataAckOrigin;
+  uint8_t dataAckSeq;
   
   // Singleton for callbacks
   static ESPNowMesh* instance;
@@ -96,13 +131,13 @@ public:
   int determineAndSetChannel() {
     if (WiFi.status() == WL_CONNECTED) {
       int ch = WiFi.channel();
-      Serial.printf("   WiFi connected, using WiFi channel: %d\n", ch);
+      LOGF("[ESPNOW] WiFi connected, using WiFi channel: %d\n", ch);
       return ch;
     } else {
       // WiFi not connected - we MUST set channel explicitly
       int ch = ESPNOW_FIXED_CHANNEL;
       wifi_set_channel(ch);  // ESP8266 SDK function
-      Serial.printf("   WiFi disconnected, forcing channel: %d\n", ch);
+      LOGF("[ESPNOW] WiFi disconnected, forcing channel: %d\n", ch);
       return ch;
     }
   }
@@ -122,24 +157,32 @@ public:
       }
     }
     
-    txCount = rxCount = txOk = txFail = forwardCount = 0;
+    txCount = rxCount = txOk = txFail = forwardCount = droppedCount = 0;
     lastSeqNum = 0;
-    seenSeqIdx = 0;
+    seenMsgIdx = 0;
     needAck = false;
+    needDataAck = false;
+    waitingForDataAck = false;
+    dataAckReceived = false;
+    
+    // Initialize message queue
+    msgQueueHead = msgQueueTail = msgQueueCount = 0;
     
     // Initialize peer slots
     for (int i = 0; i < MAX_ESPNOW_PEERS; i++) {
       peers[i].active = false;
     }
     
-    // Initialize seen sequence numbers
-    for (int i = 0; i < 10; i++) {
-      seenSeqNums[i] = 255;
+    // Initialize seen message buffer
+    for (int i = 0; i < 16; i++) {
+      seenMsgs[i].origin = 0;
+      seenMsgs[i].seq = 255;
+      seenMsgs[i].timestamp = 0;
     }
     
     // Initialize ESP-NOW
     if (esp_now_init() != 0) {
-      Serial.println("❌ ESP-NOW init failed!");
+      LOGLN("[ERROR] ESP-NOW init failed!");
       return;
     }
     
@@ -149,12 +192,11 @@ public:
     
     // Add broadcast peer
     if (esp_now_add_peer(broadcastMac, ESP_NOW_ROLE_COMBO, wifiChannel, NULL, 0) != 0) {
-      Serial.println("❌ Failed to add broadcast peer");
+      LOGLN("[ERROR] Failed to add broadcast peer");
     }
     
-    Serial.printf("✅ ESP-NOW initialized on channel %d\n", wifiChannel);
-    Serial.print("   MAC: ");
-    Serial.println(WiFi.macAddress());
+    LOGF("[OK] ESP-NOW initialized on channel %d\n", wifiChannel);
+    Serial.printf("[Node %c]      MAC: %s\n", myNodeId, WiFi.macAddress().c_str());
   }
   
   // ========== CALLBACKS (static wrappers) ==========
@@ -183,6 +225,9 @@ public:
     uint8_t msgType = data[0];
     rxCount++;
     
+    // Debug: log all received message types with node ID
+    LOGF("[ESPNOW-RX] Raw msg: type=%d, len=%d\n", msgType, len);
+    
     // Handle discovery messages
     if (msgType == MSG_TYPE_DISCOVERY && len >= sizeof(ESPNowDiscovery)) {
       ESPNowDiscovery* disc = (ESPNowDiscovery*)data;
@@ -192,13 +237,15 @@ public:
       
       // Channel verification - if we received it, we're on same channel!
       uint8_t myChannel = getCurrentChannel();
+      bool peerHasSink = (disc->hasSinkAccess == 1);
       #if DEBUG_ESPNOW
-      Serial.printf("📡 [ESP-NOW RX] Discovery from Node %c (batt:%.0f%%, rssi:%d, ch:%d) [my ch:%d] ✅ SAME CHANNEL\n",
-                    disc->nodeId, disc->batteryPercent, disc->rssi, disc->channel, myChannel);
+      LOGF("[ESPNOW-RX] Discovery from Node %c (batt:%.0f%%, rssi:%d, ch:%d, sink:%s) [my ch:%d]\n",
+                    disc->nodeId, disc->batteryPercent, disc->rssi, disc->channel, 
+                    peerHasSink ? "YES" : "NO", myChannel);
       #endif
       
-      // Update or add peer
-      updatePeer(mac, disc->nodeId, disc->batteryPercent, disc->rssi);
+      // Update or add peer with their sink access status
+      updatePeer(mac, disc->nodeId, disc->batteryPercent, disc->rssi, peerHasSink);
       
       // Schedule ACK (don't send in callback!)
       if (!needAck) {
@@ -214,36 +261,97 @@ public:
       if (ack->nodeId == myNodeId) return;
       
       uint8_t myChannel = getCurrentChannel();
+      bool peerHasSink = (ack->hasSinkAccess == 1);
       #if DEBUG_ESPNOW
-      Serial.printf("📡 [ESP-NOW RX] ACK from Node %c (ch:%d) [my ch:%d] ✅\n", 
-                    ack->nodeId, ack->channel, myChannel);
+      LOGF("[ESPNOW-RX] ACK from Node %c (ch:%d, sink:%s) [my ch:%d]\n",
+                    ack->nodeId, ack->channel, peerHasSink ? "YES" : "NO", myChannel);
       #endif
       
-      updatePeer(mac, ack->nodeId, ack->batteryPercent, ack->rssi);
+      updatePeer(mac, ack->nodeId, ack->batteryPercent, ack->rssi, peerHasSink);
+    }
+    // Handle data ACK messages
+    else if (msgType == MSG_TYPE_DATA_ACK && len >= sizeof(ESPNowDataAck)) {
+      ESPNowDataAck* dataAck = (ESPNowDataAck*)data;
+      
+      // Check if this ACK is for our pending message
+      if (waitingForDataAck && 
+          dataAck->originNode == pendingAckOrigin && 
+          dataAck->seqNum == pendingAckSeq) {
+        dataAckReceived = true;
+        LOGF("[ESPNOW-RX] Data ACK from Node %c for seq %d\n", 
+                      dataAck->ackNode, dataAck->seqNum);
+      }
     }
     // Handle data messages (for forwarding)
     else if ((msgType == MSG_TYPE_TELEMETRY || msgType == MSG_TYPE_ALERT) && 
-             len >= sizeof(ESPNowDataMsg) - 200) {
+             len >= (sizeof(ESPNowDataMsg) - 150)) {  // Adjusted for new payload size
       ESPNowDataMsg* dataMsg = (ESPNowDataMsg*)data;
+      
+      // Ignore our own broadcasts
+      if (dataMsg->originNode == myNodeId) {
+        return;
+      }
+      
+      // Accept messages addressed to us OR to sink (we might relay to sink)
+      // Also accept if we're not in the visited list (broadcast reception)
+      bool isForUs = (dataMsg->destNode == myNodeId) || 
+                     (dataMsg->destNode == 'S');
+      
+      // Also accept if destNode is not set correctly but we can help relay
+      // This handles the case where broadcast is used
+      if (!isForUs) {
+        // Check if we could be a valid relay (not in visited list)
+        bool alreadyVisited = false;
+        for (int i = 0; i < dataMsg->visitedCount && i < 5; i++) {
+          if (dataMsg->visited[i] == myNodeId) {
+            alreadyVisited = true;
+            break;
+          }
+        }
+        if (!alreadyVisited) {
+          // We haven't seen this message via our node, might be able to help
+          isForUs = true;
+          LOGF("[ESPNOW-RX] Accepting broadcast data (dest=%c, not visited)\n", dataMsg->destNode);
+        }
+      }
+      
+      if (!isForUs) {
+        #if DEBUG_ESPNOW
+        LOGF("[ESPNOW-RX] Data msg not for us (dest=%c), ignoring\n", dataMsg->destNode);
+        #endif
+        return;
+      }
+      
+      LOGF("[ESPNOW-RX] *** DATA from Node %c (type:%d, seq:%d, len:%d) ***\n",
+                    dataMsg->originNode, msgType, dataMsg->seqNum, dataMsg->payloadLen);
       
       // Check if we've seen this message (dedup)
       if (hasSeenMessage(dataMsg->originNode, dataMsg->seqNum)) {
         #if DEBUG_ESPNOW
-        Serial.printf("📡 [ESP-NOW] Dropping duplicate msg from %c seq %d\n",
+        LOGF("[ESPNOW] Dropping duplicate msg from %c seq %d\n",
                       dataMsg->originNode, dataMsg->seqNum);
         #endif
         return;
       }
       markMessageSeen(dataMsg->originNode, dataMsg->seqNum);
       
+      // Schedule a data ACK back to the sender (deferred, not in callback)
+      if (!needDataAck) {
+        needDataAck = true;
+        memcpy(dataAckMac, mac, 6);
+        dataAckOrigin = dataMsg->originNode;
+        dataAckSeq = dataMsg->seqNum;
+      }
+      
       // Store for processing in loop()
       handleDataMessage(dataMsg);
+      LOGLN("[ESPNOW-RX] Data queued for forwarding");
     }
   }
   
   // ========== PEER MANAGEMENT ==========
   
-  void updatePeer(uint8_t* mac, char nodeId, float battery, int8_t rssi) {
+  void updatePeer(uint8_t* mac, char nodeId, float battery, int8_t rssi, bool hasSinkAccess = false) {
     // Find existing or empty slot
     int slot = -1;
     for (int i = 0; i < MAX_ESPNOW_PEERS; i++) {
@@ -262,6 +370,7 @@ public:
       memcpy(peers[slot].mac, mac, 6);
       peers[slot].batteryPercent = battery;
       peers[slot].rssi = rssi;
+      peers[slot].hasSinkAccess = hasSinkAccess;
       peers[slot].lastSeen = millis();
       
       // Register as ESP-NOW peer for sending
@@ -295,7 +404,7 @@ public:
     for (int i = 0; i < MAX_ESPNOW_PEERS; i++) {
       if (peers[i].active && (now - peers[i].lastSeen) > ESPNOW_PEER_TIMEOUT_MS) {
         #if DEBUG_ESPNOW
-        Serial.printf("📡 [ESP-NOW] Peer %c expired (no contact for %ds)\n",
+        LOGF("[ESPNOW] Peer %c expired (no contact for %ds)\n",
                       peers[i].nodeId, ESPNOW_PEER_TIMEOUT_MS / 1000);
         #endif
         peers[i].active = false;
@@ -303,150 +412,253 @@ public:
     }
   }
   
-  // ========== MESSAGE DEDUPLICATION ==========
+  // ========== MESSAGE DEDUPLICATION (improved) ==========
   
   bool hasSeenMessage(char origin, uint8_t seq) {
-    uint8_t key = ((uint8_t)origin << 4) | (seq & 0x0F);
-    for (int i = 0; i < 10; i++) {
-      if (seenSeqNums[i] == key) return true;
+    uint32_t now = millis();
+    // Check all entries for matching origin+seq within last 30 seconds
+    for (int i = 0; i < 16; i++) {
+      if (seenMsgs[i].origin == origin && 
+          seenMsgs[i].seq == seq &&
+          (now - seenMsgs[i].timestamp) < 30000) {
+        return true;
+      }
     }
     return false;
   }
   
   void markMessageSeen(char origin, uint8_t seq) {
-    uint8_t key = ((uint8_t)origin << 4) | (seq & 0x0F);
-    seenSeqNums[seenSeqIdx] = key;
-    seenSeqIdx = (seenSeqIdx + 1) % 10;
+    seenMsgs[seenMsgIdx].origin = origin;
+    seenMsgs[seenMsgIdx].seq = seq;
+    seenMsgs[seenMsgIdx].timestamp = millis();
+    seenMsgIdx = (seenMsgIdx + 1) % 16;
   }
   
   // ========== SENDING ==========
   
-  void sendDiscovery(float myBattery) {
+  void sendDiscovery(float myBattery, bool hasSinkAccess = false) {
     ESPNowDiscovery disc;
     disc.type = MSG_TYPE_DISCOVERY;
     disc.nodeId = myNodeId;
     disc.batteryPercent = myBattery;
     disc.rssi = WiFi.RSSI();
-    disc.channel = getCurrentChannel();  // Include our channel
+    disc.channel = getCurrentChannel();
+    disc.hasSinkAccess = hasSinkAccess ? 1 : 0;  // Dynamic: do I have MQTT connectivity?
     
     int result = esp_now_send(broadcastMac, (uint8_t*)&disc, sizeof(disc));
     txCount++;
     
     #if DEBUG_ESPNOW
-    Serial.printf("📡 [ESP-NOW TX] Discovery broadcast (batt:%.0f%%, rssi:%d, ch:%d) %s\n",
-                  myBattery, disc.rssi, disc.channel, result == 0 ? "OK" : "FAIL");
+    LOGF("[ESPNOW-TX] Discovery broadcast (batt:%.0f%%, rssi:%d, ch:%d, sink:%s) %s\n",
+                  myBattery, disc.rssi, disc.channel, hasSinkAccess ? "YES" : "NO",
+                  result == 0 ? "OK" : "FAIL");
     #endif
   }
   
-  void sendAck(uint8_t* mac, float myBattery) {
+  void sendAck(uint8_t* mac, float myBattery, bool hasSinkAccess = false) {
     ESPNowDiscovery ack;
     ack.type = MSG_TYPE_ACK;
     ack.nodeId = myNodeId;
     ack.batteryPercent = myBattery;
     ack.rssi = WiFi.RSSI();
-    ack.channel = getCurrentChannel();  // Include our channel
+    ack.channel = getCurrentChannel();
+    ack.hasSinkAccess = hasSinkAccess ? 1 : 0;
     
     int result = esp_now_send(mac, (uint8_t*)&ack, sizeof(ack));
     txCount++;
     
     #if DEBUG_ESPNOW
-    Serial.printf("📡 [ESP-NOW TX] ACK sent (ch:%d) %s\n", ack.channel, result == 0 ? "OK" : "FAIL");
+    LOGF("[ESPNOW-TX] ACK sent (ch:%d, sink:%s) %s\n", 
+                  ack.channel, hasSinkAccess ? "YES" : "NO", result == 0 ? "OK" : "FAIL");
     #endif
   }
   
-  // Send data via ESP-NOW to specific peer
+  // Send data via ESP-NOW to specific peer with retry mechanism
+  // NOTE: Use broadcast instead of unicast for reliability on ESP8266
   bool sendData(char targetNode, uint8_t msgType, const char* payload, uint8_t payloadLen) {
     ESPNowPeer* peer = getPeer(targetNode);
     if (!peer || !peer->active) {
       #if DEBUG_ESPNOW
-      Serial.printf("📡 [ESP-NOW] Cannot send to %c - peer not found\n", targetNode);
+      LOGF("[ESPNOW] Cannot send to %c - peer not found\n", targetNode);
       #endif
       return false;
+    }
+    
+    // Truncate payload if too large for reliable transmission
+    uint8_t safeLen = min((int)payloadLen, 150);
+    if (payloadLen > 150) {
+      LOGF("[ESPNOW] WARNING: Payload truncated from %d to 150 bytes\n", payloadLen);
     }
     
     ESPNowDataMsg msg;
     msg.type = msgType;
     msg.originNode = myNodeId;
-    msg.destNode = 'S';  // Ultimately going to sink
+    msg.destNode = targetNode;  // Set intended recipient
     msg.ttl = ESPNOW_DATA_FORWARD_TTL;
     msg.seqNum = ++lastSeqNum;
     msg.visitedCount = 1;
     msg.visited[0] = myNodeId;
     msg.visited[1] = '\0';
-    msg.payloadLen = min((int)payloadLen, 200);
-    memcpy(msg.payload, payload, msg.payloadLen);
+    msg.payloadLen = safeLen;
+    memcpy(msg.payload, payload, safeLen);
     
-    int result = esp_now_send(peer->mac, (uint8_t*)&msg, sizeof(msg) - 200 + msg.payloadLen);
-    txCount++;
+    // Calculate actual message size (header + payload)
+    size_t msgSize = sizeof(ESPNowDataMsg) - 150 + safeLen;
+    
+    // Retry mechanism for improved reliability
+    bool success = false;
+    for (int retry = 0; retry < ESPNOW_DATA_RETRIES && !success; retry++) {
+      if (retry > 0) {
+        // Non-blocking delay with yield to prevent watchdog reset
+        unsigned long retryStart = millis();
+        while (millis() - retryStart < ESPNOW_RETRY_DELAY_MS) {
+          yield();  // Feed watchdog
+        }
+        #if DEBUG_ESPNOW
+        LOGF("[ESPNOW-TX] Retry %d for Node %c\n", retry, targetNode);
+        #endif
+      }
+      
+      int result = esp_now_send(broadcastMac, (uint8_t*)&msg, msgSize);
+      txCount++;
+      yield();  // Give system time after TX
+      
+      if (result == 0) {
+        success = true;
+      }
+    }
     
     #if DEBUG_ESPNOW
-    Serial.printf("📡 [ESP-NOW TX] Data to Node %c (type:%d, len:%d) %s\n",
-                  targetNode, msgType, payloadLen, result == 0 ? "OK" : "FAIL");
+    LOGF("[ESPNOW-TX] Data to Node %c (type:%d, len:%d, seq:%d, size:%d) %s\n",
+                  targetNode, msgType, safeLen, msg.seqNum, (int)msgSize, success ? "OK" : "FAIL");
     #endif
     
-    return (result == 0);
+    return success;
   }
   
   // Forward a received message to next hop
+  // Uses broadcast for reliability (like sendData)
   bool forwardData(ESPNowDataMsg* msg, char nextHop) {
     ESPNowPeer* peer = getPeer(nextHop);
     if (!peer || !peer->active) {
+      LOGF("[ESPNOW-FWD] Cannot forward - peer %c not found\n", nextHop);
       return false;
     }
     
     // Decrement TTL
     if (msg->ttl <= 1) {
       #if DEBUG_ESPNOW
-      Serial.println("📡 [ESP-NOW] Message TTL expired, not forwarding");
+      LOGLN("[ESPNOW] Message TTL expired, not forwarding");
       #endif
       return false;
     }
     msg->ttl--;
+    
+    // Update destNode to the next hop
+    msg->destNode = nextHop;
     
     // Add ourselves to visited list
     if (msg->visitedCount < 4) {
       msg->visited[msg->visitedCount++] = myNodeId;
     }
     
-    int result = esp_now_send(peer->mac, (uint8_t*)msg, sizeof(*msg) - 200 + msg->payloadLen);
-    txCount++;
-    forwardCount++;
+    // Calculate actual message size
+    size_t msgSize = sizeof(ESPNowDataMsg) - 150 + msg->payloadLen;
+    
+    // Retry mechanism with watchdog-safe delays
+    bool success = false;
+    for (int retry = 0; retry < ESPNOW_DATA_RETRIES && !success; retry++) {
+      if (retry > 0) {
+        // Non-blocking delay with yield to prevent watchdog reset
+        unsigned long retryStart = millis();
+        while (millis() - retryStart < ESPNOW_RETRY_DELAY_MS) {
+          yield();  // Feed watchdog
+        }
+      }
+      int result = esp_now_send(broadcastMac, (uint8_t*)msg, msgSize);
+      txCount++;
+      yield();  // Give system time after TX
+      if (result == 0) success = true;
+    }
+    
+    if (success) forwardCount++;
     
     #if DEBUG_ESPNOW
-    Serial.printf("📡 [ESP-NOW TX] Forwarded to Node %c (origin:%c, ttl:%d) %s\n",
-                  nextHop, msg->originNode, msg->ttl, result == 0 ? "OK" : "FAIL");
+    LOGF("[ESPNOW-FWD] To Node %c (origin:%c, ttl:%d, size:%d) %s\n",
+                  nextHop, msg->originNode, msg->ttl, (int)msgSize, success ? "OK" : "FAIL");
     #endif
     
-    return (result == 0);
+    return success;
   }
   
   // ========== PROCESS DEFERRED OPERATIONS ==========
   
-  void processDeferredOps(float myBattery) {
+  void processDeferredOps(float myBattery, bool hasSinkAccess) {
+    // Send discovery ACK
     if (needAck) {
       needAck = false;
-      sendAck(ackMac, myBattery);
+      sendAck(ackMac, myBattery, hasSinkAccess);
     }
+    
+    // Send data ACK for received data messages
+    if (needDataAck) {
+      needDataAck = false;
+      sendDataAck(dataAckMac, dataAckOrigin, dataAckSeq, hasSinkAccess);
+    }
+  }
+  
+  // Send acknowledgment for received data message
+  void sendDataAck(uint8_t* mac, char originNode, uint8_t seqNum, bool canForward) {
+    ESPNowDataAck ack;
+    ack.type = MSG_TYPE_DATA_ACK;
+    ack.ackNode = myNodeId;
+    ack.originNode = originNode;
+    ack.seqNum = seqNum;
+    ack.status = canForward ? 1 : 0;
+    
+    int result = esp_now_send(mac, (uint8_t*)&ack, sizeof(ack));
+    txCount++;
+    
+    #if DEBUG_ESPNOW
+    LOGF("[ESPNOW-TX] Data ACK to origin %c seq %d, status:%d %s\n",
+         originNode, seqNum, ack.status, result == 0 ? "OK" : "FAIL");
+    #endif
   }
   
   // ========== INCOMING DATA MESSAGE HANDLING ==========
   
-  // Store last received data message for processing in main loop
-  ESPNowDataMsg lastReceivedData;
-  volatile bool hasReceivedData;
+  // Message queue for received data (prevents loss when multiple messages arrive)
+  ESPNowDataMsg msgQueue[ESPNOW_MSG_QUEUE_SIZE];
+  volatile uint8_t msgQueueHead;  // Next write position
+  volatile uint8_t msgQueueTail;  // Next read position
+  volatile uint8_t msgQueueCount; // Number of messages in queue
   
   void handleDataMessage(ESPNowDataMsg* msg) {
-    memcpy(&lastReceivedData, msg, sizeof(ESPNowDataMsg));
-    hasReceivedData = true;
+    // Check if queue is full
+    if (msgQueueCount >= ESPNOW_MSG_QUEUE_SIZE) {
+      droppedCount++;
+      LOG_CRITICAL("[ESPNOW] Queue full, dropped msg from %c\n", msg->originNode);
+      return;
+    }
+    
+    // Add to queue (copy the message)
+    memcpy(&msgQueue[msgQueueHead], msg, sizeof(ESPNowDataMsg));
+    msgQueueHead = (msgQueueHead + 1) % ESPNOW_MSG_QUEUE_SIZE;
+    msgQueueCount++;
   }
   
   bool hasDataToProcess() {
-    return hasReceivedData;
+    return msgQueueCount > 0;
   }
   
   ESPNowDataMsg* getReceivedData() {
-    hasReceivedData = false;
-    return &lastReceivedData;
+    if (msgQueueCount == 0) return nullptr;
+    
+    // Get message from tail (oldest first - FIFO)
+    ESPNowDataMsg* msg = &msgQueue[msgQueueTail];
+    msgQueueTail = (msgQueueTail + 1) % ESPNOW_MSG_QUEUE_SIZE;
+    msgQueueCount--;
+    return msg;
   }
   
   // ========== STATS ==========
@@ -455,31 +667,39 @@ public:
     uint8_t ch = getCurrentChannel();
     bool wifiUp = (WiFi.status() == WL_CONNECTED);
     
-    Serial.println("\n===== ESP-NOW Stats =====");
-    Serial.printf("Channel: %d (%s) | WiFi: %s\n", 
-                  ch, 
+    // Build entire output in buffer to avoid interleaving
+    char buf[650];
+    int pos = 0;
+    
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "\n[Node %c] ===== ESP-NOW Stats =====\n", myNodeId);
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "[Node %c] Channel: %d (%s) | WiFi: %s\n", 
+                  myNodeId, ch, 
                   wifiUp ? "from WiFi" : "FIXED",
                   wifiUp ? "CONNECTED" : "DISCONNECTED");
-    Serial.printf("TX: %u (OK:%u FAIL:%u) | RX: %u | FWD: %u\n",
-                  txCount, txOk, txFail, rxCount, forwardCount);
-    Serial.printf("Peers (%d):\n", getPeerCount());
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "[Node %c] TX: %u (OK:%u FAIL:%u) | RX: %u | FWD: %u | DROP: %u\n",
+                  myNodeId, txCount, txOk, txFail, rxCount, forwardCount, droppedCount);
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "[Node %c] MsgQueue: %d/%d\n", myNodeId, msgQueueCount, ESPNOW_MSG_QUEUE_SIZE);
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "[Node %c] Peers (%d):\n", myNodeId, getPeerCount());
     for (int i = 0; i < MAX_ESPNOW_PEERS; i++) {
       if (peers[i].active) {
-        Serial.printf("  [%c] ", peers[i].nodeId);
-        Serial.printf("%02X:%02X:%02X:%02X:%02X:%02X",
+        pos += snprintf(buf + pos, sizeof(buf) - pos, "[Node %c]   [%c] %02X:%02X:%02X:%02X:%02X:%02X batt:%.0f%% rssi:%d sink:%s (%lus ago)\n",
+                      myNodeId, peers[i].nodeId,
                       peers[i].mac[0], peers[i].mac[1], peers[i].mac[2],
-                      peers[i].mac[3], peers[i].mac[4], peers[i].mac[5]);
-        Serial.printf(" batt:%.0f%% rssi:%d (seen %lus ago)\n",
+                      peers[i].mac[3], peers[i].mac[4], peers[i].mac[5],
                       peers[i].batteryPercent, peers[i].rssi,
+                      peers[i].hasSinkAccess ? "YES" : "NO",
                       (millis() - peers[i].lastSeen) / 1000);
       }
     }
-    Serial.println("=========================\n");
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "[Node %c] =========================\n", myNodeId);
+    
+    Serial.print(buf);
   }
   
   uint32_t getTxCount() { return txCount; }
   uint32_t getRxCount() { return rxCount; }
   uint32_t getForwardCount() { return forwardCount; }
+  uint32_t getDroppedCount() { return droppedCount; }
 };
 
 // Static instance pointer

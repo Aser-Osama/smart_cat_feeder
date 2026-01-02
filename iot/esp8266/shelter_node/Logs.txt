@@ -1,0 +1,255 @@
+X:
+batteryPercent
+81.98769
+(number)
+
+
+batteryVoltage
+3.983852
+(number)
+
+
+catPresent
+true
+(boolean)
+
+
+displayName
+"Bowl X"
+(string)
+
+
+hopCount
+1
+(number)
+
+
+isOnline
+false
+(boolean)
+
+
+
+lastColorReading
+(map)
+
+
+blue
+0
+(number)
+
+
+green
+0
+(number)
+
+
+isBrown
+false
+(boolean)
+
+
+red
+35
+(number)
+
+
+lastUpdate
+January 2, 2026 at 4:04:14 AM UTC+2
+(timestamp)
+
+
+nextHop
+"S"
+(string)
+
+
+nodeId
+"X"
+(string)
+
+
+plateStatus
+"unknown"
+(string)
+
+
+
+route
+(array)
+
+
+0
+"X"
+(string)
+
+
+1
+"SINK"
+(string)
+
+
+rssi
+-60
+(number)
+
+
+ultrasonicDistanceCm
+14.11445
+(number)
+
+[Node X] [WIFI] Connecting to: Aser
+..................
+[Node X] [OK] WiFi: 172.29.32.149 RSSI:-55
+
+[Node X]      MAC: 48:55:19:14:A2:29
+[Node X] MQTT connected
+
+
+
+[Node X] [TX] Telemetry via MQTT
+[Node X] [TX] Telemetry via ESP-NOW -> Node W
+[Node X] [TX] Telemetry via ESP-NOW -> Node W
+[Node X] [TX] Telemetry via ESP-NOW -> Node W
+[Node X] [TX] Telemetry via ESP-NOW -> Node W
+[Node X] [TX] Telemetry via ESP-NOW -> Node W
+[Node X] [TX] Telemetry via ESP-NOW -> Node W
+[Node X] [TX] Telemetry via ESP-NOW -> Node W
+[Node X] [TX] Telemetry via ESP-NOW -> Node W
+[Node X] [FWD] Data from Node W (type:3)
+[Node X] [FWD] W->MQTT OK
+[Node X] [TX] Telemetry via ESP-NOW -> Node W
+[Node X] [TX] Telemetry via ESP-NOW -> Node W
+[Node X] [TX] Telemetry via ESP-NOW -> Node W
+[Node X] [TX] Telemetry via ESP-NOW -> Node W
+[Node X] [TX] Telemetry via ESP-NOW -> Node W
+[Node X] [TX] Telemetry via ESP-NOW -> Node W
+[Node X] [TX] Telemetry via ESP-NOW -> Node W
+[Node X] [TX] Telemetry via ESP-NOW -> Node W
+
+W:
+batteryPercent
+67.96843
+(number)
+
+
+batteryVoltage
+3.815621
+(number)
+
+
+catPresent
+false
+(boolean)
+
+
+displayName
+"Bowl W"
+(string)
+
+
+hopCount
+1
+(number)
+
+
+isOnline
+true
+(boolean)
+
+
+
+lastColorReading
+(map)
+
+
+blue
+0
+(number)
+
+
+green
+0
+(number)
+
+
+isBrown
+false
+(boolean)
+
+
+red
+103
+(number)
+
+
+lastUpdate
+January 2, 2026 at 4:07:22 AM UTC+2
+(timestamp)
+
+
+nextHop
+"S"
+(string)
+
+
+nodeId
+"W"
+(string)
+
+
+plateStatus
+"empty"
+(string)
+
+
+
+route
+(array)
+
+
+0
+"W"
+(string)
+
+
+1
+"SINK"
+(string)
+
+
+rssi
+-31
+(number)
+
+
+ultrasonicDistanceCm
+80.5364
+(number)
+
+========================================================
+    Shelter Cat Monitoring - ESP8266 Node W
+========================================================
+
+
+[Node W] [WIFI] Connecting to: Aser
+..................
+[Node W] [OK] WiFi: 172.29.32.16 RSSI:-50
+
+[Node W]      MAC: 48:55:19:15:48:FD
+[Node W] MQTT connected
+
+
+
+[Node W] [TX] Telemetry via MQTT
+[Node W] [TX] Telemetry via MQTT
+[Node W] [FWD] Data from Node X (type:3)
+[Node W] [FWD] X->MQTT OK
+[Node W] [TX] Telemetry via MQTT
+[Node W] [FWD] Data from Node X (type:3)
+[Node W] [FWD] X->MQTT OK
+[Node W] [TX] Telemetry via MQTT
+[Node W] [FWD] Data from Node X (type:3)
+[Node W] [FWD] X->MQTT OK
+
+

@@ -80,6 +80,34 @@ String topicAlert;
 const char* USER_ID = "EyrwFFoBJ8TlVFepJvqdeooOBwA2";
 
 // ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
+#if ESPNOW_ENABLED && FORCE_MULTIHOP
+// Check if any ESP-NOW peer has sink access (for forced multi-hop mode)
+bool hasOtherPeerWithSinkAccess() {
+  for (int i = 0; i < MAX_ESPNOW_PEERS; i++) {
+    ESPNowPeer* peers = espnowMesh.getPeers();
+    if (peers[i].active && peers[i].hasSinkAccess) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Get a peer with sink access to route through
+char getPeerWithSinkAccess() {
+  for (int i = 0; i < MAX_ESPNOW_PEERS; i++) {
+    ESPNowPeer* peers = espnowMesh.getPeers();
+    if (peers[i].active && peers[i].hasSinkAccess) {
+      return peers[i].nodeId;
+    }
+  }
+  return 'S';  // Fallback to sink if no peers
+}
+#endif
+
+// ============================================================================
 // SETUP
 // ============================================================================
 
@@ -87,10 +115,11 @@ void setup() {
   Serial.begin(115200);
   delay(100);
   
-  Serial.println("\n\n");
-  Serial.println("╔══════════════════════════════════════════════════════╗");
-  Serial.println("║    Shelter Cat Monitoring - ESP8266 Node             ║");
-  Serial.println("╚══════════════════════════════════════════════════════╝");
+  Serial.println();
+  Serial.println();
+  Serial.println("========================================================");
+  Serial.printf("    Shelter Cat Monitoring - ESP8266 Node %c\n", NODE_ID);
+  Serial.println("========================================================");
   
   // Initialize node identity
   nodeIdStr[0] = NODE_ID;
@@ -98,25 +127,27 @@ void setup() {
   nodeIdString = String(nodeIdStr);
   mqttClientId = String(MQTT_CLIENT_ID_PREFIX) + nodeIdString;
   
-  Serial.printf("📍 Node ID: %c\n", NODE_ID);
-  Serial.printf("🔗 MQTT Client: %s\n", mqttClientId.c_str());
+  LOGF("[INFO] Node ID: %c\n", NODE_ID);
+  LOGF("[INFO] MQTT Client: %s\n", mqttClientId.c_str());
   
   // Build MQTT topics
   topicTelemetry = String(TOPIC_TELEMETRY_PREFIX) + nodeIdString + TOPIC_TELEMETRY_SUFFIX;
   topicRouting = String(TOPIC_TELEMETRY_PREFIX) + nodeIdString + TOPIC_ROUTING_SUFFIX;
   topicAlert = String(TOPIC_TELEMETRY_PREFIX) + nodeIdString + TOPIC_ALERT_SUFFIX;
   
-  Serial.println("\n📡 MQTT Topics:");
-  Serial.printf("   Telemetry: %s\n", topicTelemetry.c_str());
-  Serial.printf("   Routing:   %s\n", topicRouting.c_str());
-  Serial.printf("   Alert:     %s\n", topicAlert.c_str());
+  Serial.println();
+  LOGLN("[INFO] MQTT Topics:");
+  LOGF("   Telemetry: %s\n", topicTelemetry.c_str());
+  LOGF("   Routing:   %s\n", topicRouting.c_str());
+  LOGF("   Alert:     %s\n", topicAlert.c_str());
   
   // Initialize status LED
   pinMode(STATUS_LED_PIN, OUTPUT);
   digitalWrite(STATUS_LED_PIN, LOW);
   
   // Initialize components
-  Serial.println("\n🔧 Initializing components...");
+  Serial.println();
+  LOGLN("[INFO] Initializing components...");
   
   // Sensors
   sensors.begin();
@@ -135,7 +166,8 @@ void setup() {
   // Initialize ESP-NOW
   // If WiFi connected: uses WiFi's channel automatically
   // If WiFi disconnected: uses ESPNOW_FIXED_CHANNEL from config.h
-  Serial.println("\n📡 Initializing ESP-NOW mesh...");
+  Serial.println();
+  LOGLN("[INFO] Initializing ESP-NOW mesh...");
   espnowMesh.begin(NODE_ID);  // Auto-detects channel
   #endif
   
@@ -147,10 +179,11 @@ void setup() {
   connectMQTT();
   
   // Initial sensor read
-  Serial.println("\n📊 Initial sensor reading...");
+  Serial.println();
+  LOGLN("[INFO] Initial sensor reading...");
   SensorData data = sensors.readAll();
-  Serial.printf("   Cat present: %s\n", data.ultrasonic.catPresent ? "YES" : "NO");
-  Serial.printf("   Plate status: %s\n", sensors.getPlateStatusString());
+  LOGF("   Cat present: %s\n", data.ultrasonic.catPresent ? "YES" : "NO");
+  LOGF("   Plate status: %s\n", sensors.getPlateStatusString());
   
   // Blink LED to confirm setup
   for (int i = 0; i < 3; i++) {
@@ -160,7 +193,9 @@ void setup() {
     delay(150);
   }
   
-  Serial.println("\n✅ Setup complete! Entering main loop...\n");
+  Serial.println();
+  LOGLN("[OK] Setup complete! Entering main loop...");
+  Serial.println();
 }
 
 // ============================================================================
@@ -168,15 +203,18 @@ void setup() {
 // ============================================================================
 
 void setupWiFi() {
-  Serial.print("📶 Connecting to WiFi: ");
-  Serial.println(WIFI_SSID);
+  LOG_CRITICAL("[WIFI] Connecting to: %s\n", WIFI_SSID);
   
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   
   int attempts = 0;
   while (WiFi.status() != WL_CONNECTED && attempts < 30) {
-    delay(500);
+    // Non-blocking delay with yield
+    unsigned long waitStart = millis();
+    while (millis() - waitStart < 500) {
+      yield();
+    }
     Serial.print(".");
     digitalWrite(STATUS_LED_PIN, !digitalRead(STATUS_LED_PIN));
     attempts++;
@@ -184,12 +222,11 @@ void setupWiFi() {
   
   if (WiFi.status() == WL_CONNECTED) {
     Serial.println();
-    Serial.println("✅ WiFi connected!");
-    Serial.printf("   IP: %s\n", WiFi.localIP().toString().c_str());
-    Serial.printf("   RSSI: %d dBm\n", WiFi.RSSI());
+    LOG_CRITICAL("[OK] WiFi: %s RSSI:%d\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
     digitalWrite(STATUS_LED_PIN, LOW);
   } else {
-    Serial.println("\n❌ WiFi connection failed!");
+    Serial.println();
+    LOG_EVENT("WiFi failed - continuing");
     // Continue anyway - might connect later
   }
 }
@@ -199,25 +236,31 @@ void setupWiFi() {
 // ============================================================================
 
 void connectMQTT() {
-  while (!mqttClient.connected()) {
-    Serial.printf("🔌 Connecting to MQTT broker %s...", MQTT_BROKER);
+  int attempts = 0;
+  while (!mqttClient.connected() && attempts < 3) {  // Limit retry attempts
+    LOGF("[MQTT] Connecting to broker %s...", MQTT_BROKER);
     
     if (mqttClient.connect(mqttClientId.c_str())) {
-      Serial.println(" ✅ connected!");
+      LOG_EVENT("MQTT connected");
       
       // Subscribe to mesh topics for routing
       mqttClient.subscribe(TOPIC_MESH_NEIGHBOR);
       mqttClient.subscribe(TOPIC_MESH_FORWARD);
       mqttClient.subscribe(TOPIC_BROADCAST_CONFIG);
       
-      Serial.println("   Subscribed to mesh and config topics");
+      LOGLN("   Subscribed to mesh and config topics");
       
       // Send initial presence announcement
       sendNeighborBeacon();
       
     } else {
-      Serial.printf(" ❌ failed (rc=%d), retrying in 5s\n", mqttClient.state());
-      delay(5000);
+      LOGF(" FAILED (rc=%d)\n", mqttClient.state());
+      attempts++;
+      // Non-blocking delay with yield
+      unsigned long waitStart = millis();
+      while (millis() - waitStart < 2000) {  // Reduced from 5s to 2s
+        yield();
+      }
     }
   }
 }
@@ -233,7 +276,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   message[length] = '\0';
   
   #if DEBUG_MQTT
-  Serial.printf("📨 MQTT [%s]: %s\n", topic, message);
+  LOGF("[MQTT-RX] %s: %s\n", topic, message);
   #endif
   
   // Update battery for reception
@@ -262,24 +305,41 @@ void handleNeighborBeacon(const char* message) {
   DeserializationError error = deserializeJson(doc, message);
   
   if (error) {
-    Serial.printf("❌ JSON parse error: %s\n", error.c_str());
+    LOGF("[ERROR] JSON parse error: %s\n", error.c_str());
     return;
   }
   
   const char* nodeId = doc["nodeId"];
   if (nodeId && strlen(nodeId) > 0) {
-    int rssi = doc["rssi"] | -100;
-    float batteryPercent = doc["battery"] | 0;
+    // MQTT beacons come from other nodes via the broker
+    // We can't measure actual ESP-NOW link quality here, so use a conservative estimate
+    // The ESP-NOW discovery callback will override this with better values
+    int espnowRssi = ESTIMATED_ESPNOW_RSSI;  // Conservative estimate from config
     
-    // Update routing table with this neighbor
-    routing.updateNeighbor(nodeId[0], rssi, batteryPercent, false);
+    // Parse battery - ensure it's read as float
+    float batteryPercent = 0.0;
+    if (doc.containsKey("battery")) {
+      batteryPercent = doc["battery"].as<float>();
+    }
+    
+    // Parse neighbor's WiFi quality (for path scoring)
+    int wifiRssi = -100;
+    if (doc.containsKey("wifiRssi")) {
+      wifiRssi = doc["wifiRssi"].as<int>();
+    }
+    
+    // Parse sink access status
+    bool hasSinkAccess = doc["hasSinkAccess"] | false;
+    
+    // Update routing table with full path quality info
+    routing.updateNeighbor(nodeId[0], espnowRssi, batteryPercent, hasSinkAccess, wifiRssi);
   }
 }
 
 void handleForwardedMessage(const char* message) {
   // In a full implementation, this would handle message forwarding
   // For now, we log it
-  Serial.printf("📬 Forwarded message received: %s\n", message);
+  LOGF("[FWD-RX] Forwarded message: %s\n", message);
 }
 
 void handleConfigUpdate(const char* message) {
@@ -290,7 +350,7 @@ void handleConfigUpdate(const char* message) {
   
   // Handle configuration updates (e.g., threshold changes)
   if (doc.containsKey("brownThreshold")) {
-    Serial.println("📝 Config update received (brown threshold)");
+    LOGLN("[CONFIG] Config update received (brown threshold)");
     // Could update thresholds dynamically here
   }
 }
@@ -300,6 +360,7 @@ void handleConfigUpdate(const char* message) {
 // ============================================================================
 
 void sendTelemetry(SensorData& data) {
+  // Full telemetry JSON for MQTT (512 bytes max)
   StaticJsonDocument<512> doc;
   
   doc["nodeId"] = nodeIdString;
@@ -354,42 +415,77 @@ void sendTelemetry(SensorData& data) {
     }
   }
   
-  // Serialize
+  // Serialize full telemetry for MQTT
   char buffer[512];
   size_t len = serializeJson(doc, buffer);
+  
+  // Create COMPACT telemetry for ESP-NOW (MUST fit in 150 bytes)
+  // Uses short keys and minimal data - gateway will expand it
+  StaticJsonDocument<160> compactDoc;
+  compactDoc["n"] = nodeIdString;                              // nodeId
+  compactDoc["u"] = USER_ID;                                   // userId
+  compactDoc["d"] = (int)data.ultrasonic.distanceCm;          // distance
+  compactDoc["c"] = data.ultrasonic.catPresent ? 1 : 0;       // catPresent
+  compactDoc["r"] = data.color.red;                           // red color
+  compactDoc["p"] = data.plateEmpty ? "e" : (data.color.isBrown ? "f" : "u");  // plateStatus: e/f/u
+  compactDoc["b"] = (int)battery.getPercent();                // battery %
+  compactDoc["s"] = WiFi.RSSI();                              // rssi
+  compactDoc["h"] = routing.getHopCount() + 1;                // hopCount (+1 for relay)
+  
+  char compactBuffer[150];
+  size_t compactLen = serializeJson(compactDoc, compactBuffer);
   
   // Determine how to send based on routing decision
   char nextHop = routing.getNextHop();
   
   #if ESPNOW_ENABLED
-  if (nextHop != 'S' && espnowMesh.getPeer(nextHop) != nullptr) {
-    // Route via ESP-NOW to another node
-    bool sent = espnowMesh.sendData(nextHop, MSG_TYPE_TELEMETRY, buffer, len);
+  
+  #if FORCE_MULTIHOP
+  // FORCED MULTI-HOP MODE: Always try to route via ESP-NOW peers
+  // This is for demonstrating multi-hop routing
+  if (hasOtherPeerWithSinkAccess()) {
+    char targetPeer = getPeerWithSinkAccess();
+    // Use COMPACT payload for ESP-NOW (fits in 150 byte limit)
+    bool sent = espnowMesh.sendData(targetPeer, MSG_TYPE_TELEMETRY, compactBuffer, compactLen);
     if (sent) {
-      Serial.printf("📤 Telemetry sent via ESP-NOW to Node %c\n", nextHop);
-      network["sentVia"] = String("ESP-NOW->") + String(nextHop);
+      LOG_CRITICAL("[TX] Telemetry via ESP-NOW -> Node %c (%d bytes)\n", targetPeer, compactLen);
     } else {
-      // Fallback to direct MQTT if ESP-NOW fails
-      Serial.println("⚠️ ESP-NOW send failed, falling back to MQTT");
+      LOG_CRITICAL("[TX] ESP-NOW failed, fallback MQTT\n");
       mqttClient.publish(topicTelemetry.c_str(), buffer);
       battery.drainForWifiTx();
     }
   } else {
-    // Direct to sink via MQTT
+    // No peers available - must use direct MQTT
+    LOG_CRITICAL("[TX] No peers, direct MQTT\n");
     mqttClient.publish(topicTelemetry.c_str(), buffer);
     battery.drainForWifiTx();
-    #if DEBUG_MQTT
-    Serial.printf("📤 Telemetry sent via MQTT to %s\n", topicTelemetry.c_str());
-    #endif
   }
+  #else
+  // NORMAL MODE: Use best route
+  if (nextHop != 'S' && espnowMesh.getPeer(nextHop) != nullptr) {
+    // Route via ESP-NOW to another node - use COMPACT payload
+    bool sent = espnowMesh.sendData(nextHop, MSG_TYPE_TELEMETRY, compactBuffer, compactLen);
+    if (sent) {
+      LOG_CRITICAL("[TX] Telemetry via ESP-NOW -> Node %c (%d bytes)\n", nextHop, compactLen);
+      network["sentVia"] = String("ESP-NOW->") + String(nextHop);
+    } else {
+      // Fallback to direct MQTT if ESP-NOW fails
+      LOG_CRITICAL("[TX] ESP-NOW fail, fallback MQTT\n");
+      mqttClient.publish(topicTelemetry.c_str(), buffer);
+      battery.drainForWifiTx();
+    }
+  } else {
+    // Direct to sink via MQTT - use full JSON
+    mqttClient.publish(topicTelemetry.c_str(), buffer);
+    battery.drainForWifiTx();
+    LOG_CRITICAL("[TX] Telemetry via MQTT\n");
+  }
+  #endif  // FORCE_MULTIHOP
   #else
   // No ESP-NOW, use MQTT only
   mqttClient.publish(topicTelemetry.c_str(), buffer);
   battery.drainForWifiTx();
-  
-  #if DEBUG_MQTT
-  Serial.printf("📤 Telemetry sent to %s\n", topicTelemetry.c_str());
-  #endif
+  LOG_CRITICAL("[TX] Telemetry via MQTT\n");
   #endif
 }
 
@@ -424,7 +520,7 @@ void sendRoutingUpdate(RoutingDecision& decision) {
   mqttClient.publish(topicRouting.c_str(), buffer);
   battery.drainForWifiTx();
   
-  Serial.printf("🔀 Routing update sent: %c -> %c (score: %.2f)\n",
+  LOGF("[ROUTE] Routing update sent: %c -> %c (score: %.2f)\n",
                 decision.previousNextHop, decision.newNextHop, decision.selectedScore);
 }
 
@@ -465,27 +561,49 @@ void sendAlert(const char* alertType, const char* message, SensorData& data) {
   char nextHop = routing.getNextHop();
   
   #if ESPNOW_ENABLED
+  
+  #if FORCE_MULTIHOP
+  // FORCED MULTI-HOP MODE: Always try to route alerts via ESP-NOW peers
+  if (hasOtherPeerWithSinkAccess()) {
+    char targetPeer = getPeerWithSinkAccess();
+    bool sent = espnowMesh.sendData(targetPeer, MSG_TYPE_ALERT, buffer, len);
+    if (sent) {
+      LOGF("[ALERT] Sent via ESP-NOW to Node %c (FORCED MULTIHOP): %s - %s\n", targetPeer, alertType, message);
+    } else {
+      mqttClient.publish(topicAlert.c_str(), buffer);
+      battery.drainForWifiTx();
+      LOGF("[ALERT] Sent via MQTT (fallback): %s - %s\n", alertType, message);
+    }
+  } else {
+    mqttClient.publish(topicAlert.c_str(), buffer);
+    battery.drainForWifiTx();
+    LOGF("[ALERT] Sent via MQTT (no peers): %s - %s\n", alertType, message);
+  }
+  #else
+  // NORMAL MODE
   if (nextHop != 'S' && espnowMesh.getPeer(nextHop) != nullptr) {
     // Route via ESP-NOW
     bool sent = espnowMesh.sendData(nextHop, MSG_TYPE_ALERT, buffer, len);
     if (sent) {
-      Serial.printf("🚨 ALERT sent via ESP-NOW to Node %c: %s - %s\n", nextHop, alertType, message);
+      LOGF("[ALERT] Sent via ESP-NOW to Node %c: %s - %s\n", nextHop, alertType, message);
     } else {
       // Fallback to MQTT
       mqttClient.publish(topicAlert.c_str(), buffer);
       battery.drainForWifiTx();
-      Serial.printf("🚨 ALERT sent via MQTT (ESP-NOW failed): %s - %s\n", alertType, message);
+      LOGF("[ALERT] Sent via MQTT (ESP-NOW failed): %s - %s\n", alertType, message);
     }
   } else {
     // Direct to sink via MQTT
     mqttClient.publish(topicAlert.c_str(), buffer);
     battery.drainForWifiTx();
-    Serial.printf("🚨 ALERT sent via MQTT: %s - %s\n", alertType, message);
+    LOGF("[ALERT] Sent via MQTT: %s - %s\n", alertType, message);
   }
+  #endif  // FORCE_MULTIHOP
+  
   #else
   mqttClient.publish(topicAlert.c_str(), buffer);
   battery.drainForWifiTx();
-  Serial.printf("🚨 ALERT sent: %s - %s\n", alertType, message);
+  LOGF("[ALERT] Sent: %s - %s\n", alertType, message);
   #endif
 }
 
@@ -533,7 +651,7 @@ void sendNeighborBeacon() {
   battery.drainForWifiTx();
   
   #if DEBUG_ROUTING
-  Serial.println("📡 Neighbor beacon sent");
+  LOGLN("[BEACON] Neighbor beacon sent");
   #endif
 }
 
@@ -556,12 +674,15 @@ void loop() {
   #if ESPNOW_ENABLED
   // --- ESP-NOW Operations ---
   
+  // Determine if this node has direct sink access (MQTT connected)
+  bool hasSinkAccess = mqttClient.connected();
+  
   // Process deferred operations (ACKs scheduled from callbacks)
-  espnowMesh.processDeferredOps(battery.getPercent());
+  espnowMesh.processDeferredOps(battery.getPercent(), hasSinkAccess);
   
   // Send ESP-NOW discovery beacons
   if (now - lastEspnowDiscovery >= ESPNOW_DISCOVERY_INTERVAL) {
-    espnowMesh.sendDiscovery(battery.getPercent());
+    espnowMesh.sendDiscovery(battery.getPercent(), hasSinkAccess);
     lastEspnowDiscovery = now;
   }
   
@@ -569,22 +690,41 @@ void loop() {
   for (int i = 0; i < MAX_ESPNOW_PEERS; i++) {
     ESPNowPeer* peers = espnowMesh.getPeers();
     if (peers[i].active) {
-      routing.updateNeighbor(peers[i].nodeId, peers[i].rssi, peers[i].batteryPercent, false);
+      // peers[i].rssi is their WiFi RSSI (path to sink)
+      // We estimate ESP-NOW link quality - if we received their discovery, it's decent
+      int espnowLinkRssi = ESTIMATED_ESPNOW_RSSI;  // From config.h
+      
+      // Pass both the ESP-NOW link quality and their WiFi quality for path comparison
+      routing.updateNeighbor(peers[i].nodeId, espnowLinkRssi, peers[i].batteryPercent, 
+                            peers[i].hasSinkAccess, peers[i].rssi);
       // Mark this neighbor as ESP-NOW reachable for routing bonus
       routing.setEspnowAvailable(peers[i].nodeId, true);
     }
   }
   
-  // Handle forwarded messages received via ESP-NOW
-  if (espnowMesh.hasDataToProcess()) {
+  // Handle ALL queued messages received via ESP-NOW (process entire queue)
+  while (espnowMesh.hasDataToProcess()) {
     ESPNowDataMsg* msg = espnowMesh.getReceivedData();
+    if (msg == nullptr) break;  // Safety check
     
-    // This message needs to go to sink - we can forward via MQTT or another hop
-    char nextHop = routing.getNextHop();
+    LOG_CRITICAL("[FWD] Data from Node %c (type:%d)\n", msg->originNode, msg->type);
     
-    if (nextHop == 'S') {
-      // We're the gateway to sink - publish to MQTT
-      Serial.printf("📬 [ESP-NOW->MQTT] Forwarding from Node %c to MQTT\n", msg->originNode);
+    // FIX: Always forward to MQTT if we have connectivity, regardless of own routing preference
+    // This prevents the bug where we'd try to forward back to the sender
+    bool canForwardToMqtt = mqttClient.connected();
+    
+    #if FORCE_MULTIHOP
+    // In forced multi-hop mode, only forward to MQTT if we're the designated gateway
+    // (i.e., no other peers with sink access)
+    canForwardToMqtt = canForwardToMqtt && !hasOtherPeerWithSinkAccess();
+    #endif
+    
+    LOGF("[FWD] MQTT connected: %s, canForward: %s\n",
+                  mqttClient.connected() ? "YES" : "NO",
+                  canForwardToMqtt ? "YES" : "NO");
+    
+    if (canForwardToMqtt) {
+      // We have MQTT connectivity - forward to sink directly
       
       // Publish the payload to the appropriate topic based on message type
       String topic;
@@ -595,23 +735,41 @@ void loop() {
       }
       
       if (topic.length() > 0) {
-        mqttClient.publish(topic.c_str(), msg->payload, msg->payloadLen);
+        // Ensure null-terminated payload for MQTT publish
+        char payloadBuf[160];  // Match ESP-NOW payload size
+        int copyLen = min((int)msg->payloadLen, 159);
+        memcpy(payloadBuf, msg->payload, copyLen);
+        payloadBuf[copyLen] = '\0';
+        
+        bool published = mqttClient.publish(topic.c_str(), payloadBuf);
         battery.drainForWifiTx();
+        LOG_CRITICAL("[FWD] %c->MQTT %s\n", msg->originNode, published ? "OK" : "FAIL");
       }
     } else {
-      // Forward via ESP-NOW to next hop
-      espnowMesh.forwardData(msg, nextHop);
+      // No MQTT access or forced multi-hop - forward via ESP-NOW to next hop
+      char nextHop = routing.getNextHop();
+      if (nextHop != 'S' && nextHop != msg->originNode) {
+        // Don't forward back to origin!
+        bool fwdOk = espnowMesh.forwardData(msg, nextHop);
+        LOG_CRITICAL("[FWD] %c->ESP-NOW->%c %s\n", msg->originNode, nextHop, fwdOk ? "OK" : "FAIL");
+      } else {
+        LOG_CRITICAL("[FWD] %c no valid hop\n", msg->originNode);
+      }
     }
+    
+    yield();  // Prevent watchdog reset when processing multiple messages
   }
   
   // Cleanup stale ESP-NOW peers
   espnowMesh.cleanupStalePeers();
   
-  // Print ESP-NOW stats periodically
+  // Print ESP-NOW stats periodically (less frequently in production mode)
+  #if DEBUG_LOGGING
   if (now - lastEspnowStats >= 30000) {
     espnowMesh.printStats();
     lastEspnowStats = now;
   }
+  #endif
   #endif
   
   // --- Sensor Reading ---
@@ -619,7 +777,7 @@ void loop() {
     lastSensorRead = now;
     
     // Read all sensors
-    Serial.println("\n📊 Reading sensors...");
+    LOGLN("[SENSOR] Reading sensors...");
     SensorData data = sensors.readAll();
     battery.drainForSensorCycle();
     
@@ -669,12 +827,12 @@ void loop() {
     } else {
       // Brief flash for normal operation
       digitalWrite(STATUS_LED_PIN, HIGH);
-      delay(50);
+      delay(30);  // Reduced from 50ms
       digitalWrite(STATUS_LED_PIN, LOW);
       lastBlink = now;
     }
   }
   
-  // Small delay to prevent watchdog issues
-  delay(10);
+  // Yield to prevent watchdog reset - more reliable than delay()
+  yield();
 }

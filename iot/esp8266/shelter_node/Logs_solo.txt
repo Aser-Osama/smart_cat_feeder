@@ -1,0 +1,132 @@
+..............
+[OK] WiFi connected!
+     IP: 172.29.32.149
+     RSSI: -34 dBm
+
+[INFO] Initializing ESP-NOW mesh...
+
+[ESPNOW] WiFi connected, using WiFi channel: 11
+
+[OK] ESP-NOW initialized on channel 11
+     MAC: 48:55:19:14:A2:29
+[MQTT] Connecting to broker 172.29.32.150... OK!
+   Subscribed to mesh and config topics
+
+[BEACON] Neighbor beacon sent
+
+[INFO] Initial sensor reading...
+
+[Ultrasonic] Distance: 8.5 cm, Cat: YES, Valid: YES
+
+[Color] Pulses: 90 = EMPTY (dark) (empty<200, red:200-600)
+   Cat present: YES
+   Plate status: eating
+
+[OK] Setup complete! Entering main loop...
+
+
+[ESPNOW-TX] Discovery broadcast (batt:66%, rssi:-38, ch:11, sink:YES) OK
+
+[SENSOR] Reading sensors...
+
+[Ultrasonic] Distance: 8.5 cm, Cat: YES, Valid: YES
+
+[Color] Pulses: 93 = EMPTY (dark) (empty<200, red:200-600)
+
+[ALERT] Sent via MQTT: cat_present - Cat detected at Bowl W
+
+[TX] Telemetry sent via MQTT to shelter/node/W/telemetry
+
+[ROUTING] Route decision: W -> S (score: 1.00) | No change - current route optimal | Candidates: S(1.00) 
+
+[MQTT-RX] shelter/mesh/neighbor: {"nodeId":"W","battery":66.0,"rssi":-49,"timestamp":10155}
+
+[BEACON] Neighbor beacon sent
+
+[MQTT-RX] shelter/mesh/neighbor: {"nodeId":"W","battery":66.0,"rssi":-34,"timestamp":15007}
+
+[ESPNOW-TX] Discovery broadcast (batt:66%, rssi:-34, ch:11, sink:YES) OK
+
+[ESPNOW-TX] Discovery broadcast (batt:66%, rssi:-30, ch:11, sink:YES) OK
+
+[SENSOR] Reading sensors...
+
+[Ultrasonic] Distance: 8.5 cm, Cat: YES, Valid: YES
+
+[Color] Pulses: 87 = EMPTY (dark) (empty<200, red:200-600)
+
+[TX] Telemetry sent via MQTT to shelter/node/W/telemetry
+
+[ESPNOW-TX] Discovery broadcast (batt:66%, rssi:-32, ch:11, sink:YES) OK
+
+[BATTERY] 66.0% (1319.3 mAh remaining, drain rate: 80.00 mA)
+
+===== ESP-NOW Stats =====
+Channel: 11 (from WiFi) | WiFi: CONNECTED
+TX: 4 (OK:4 FAIL:0) | RX: 0 | FWD: 0
+Peers (0):
+=========================
+
+[BEACON] Neighbor beacon sent
+
+[MQTT-RX] shelter/mesh/neighbor: {"nodeId":"W","battery":66.0,"rssi":-32,"timestamp":30021}
+
+[SENSOR] Reading sensors...
+
+[Ultrasonic] Distance: 8.5 cm, Cat: YES, Valid: YES
+
+[Color] Pulses: 101 = EMPTY (dark) (empty<200, red:200-600)
+
+[TX] Telemetry sent via MQTT to shelter/node/W/telemetry
+
+[ESPNOW-TX] Discovery broadcast (batt:66%, rssi:-34, ch:11, sink:YES) OK
+
+[ESPNOW-TX] Discovery broadcast (batt:66%, rssi:-32, ch:11, sink:YES) OK
+
+[SENSOR] Reading sensors...
+
+[Ultrasonic] Distance: 8.5 cm, Cat: YES, Valid: YES
+
+[Color] Pulses: 101 = EMPTY (dark) (empty<200, red:200-600)
+
+[TX] Telemetry sent via MQTT to shelter/node/W/telemetry
+
+[ROUTING] Route decision: W -> S (score: 1.00) | No change - current route optimal | Candidates: S(1.00) 
+
+[ESPNOW-TX] Discovery broadcast (batt:66%, rssi:-33, ch:11, sink:YES) OK
+
+[BEACON] Neighbor beacon sent
+
+[MQTT-RX] shelter/mesh/neighbor: {"nodeId":"W","battery":65.9,"rssi":-34,"timestamp":45023}
+
+[ROUTING] Route decision: W -> S (score: 1.00) | No change - current route optimal | Candidates: S(1.00) 
+
+[ESPNOW-TX] Discovery broadcast (batt:66%, rssi:-34, ch:11, sink:YES) OK
+
+[ROUTING] Route decision: W -> S (score: 1.00) | No change - current route optimal | Candidates: S(1.00) 
+
+[SENSOR] Reading sensors...
+
+[Ultrasonic] Distance: 8.5 cm, Cat: YES, Valid: YES
+
+[Color] Pulses: 101 = EMPTY (dark) (empty<200, red:200-600)
+
+[TX] Telemetry sent via MQTT to shelter/node/W/telemetry
+
+[ESPNOW-TX] Discovery broadcast (batt:66%, rssi:-31, ch:11, sink:YES) OK
+
+[ESPNOW-TX] Discovery broadcast (batt:66%, rssi:-31, ch:11, sink:YES) OK
+
+[BATTERY] 65.9% (1318.6 mAh remaining, drain rate: 80.00 mA)
+
+===== ESP-NOW Stats =====
+Channel: 11 (from WiFi) | WiFi: CONNECTED
+TX: 10 (OK:10 FAIL:0) | RX: 0 | FWD: 0
+Peers (0):
+=========================
+
+[BEACON] Neighbor beacon sent
+
+[ROUTING] Route decision: W -> S (score: 1.00) | No change - current route optimal | Candidates: S(1.00) 
+
+[MQTT-RX] shelter/mesh/neighbor: {"nodeId":"W","battery":65.9,"rssi":-38,"timestamp":60030}

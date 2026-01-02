@@ -21,9 +21,10 @@
 
 struct Neighbor {
   char nodeId;
-  int rssi;
+  int rssi;              // ESP-NOW RSSI to this neighbor (link quality)
+  int wifiRssi;          // This neighbor's WiFi RSSI to sink (their direct path quality)
   float batteryPercent;
-  bool isSink;
+  bool hasSinkAccess;    // Dynamic: true if this neighbor currently has MQTT/WiFi to gateway
   unsigned long lastSeen;
   bool valid;
 };
@@ -59,24 +60,64 @@ private:
   int lastSinkRssi;
   bool espnowAvailable[MAX_NEIGHBORS];  // Track which neighbors are reachable via ESP-NOW
 
-  // Calculate routing score (higher is better)
-  // ESP-NOW reachable peers get a bonus
-  float calculateScore(int rssi, float batteryPercent, bool hasEspnow = false) {
-    // Normalize RSSI: -100 dBm = 0, -50 dBm = 1
-    float normalizedRssi = constrain((rssi + 100.0) / 50.0, 0.0, 1.0);
-    
-    // Normalize battery: 0% = 0, 100% = 1
-    float normalizedBattery = batteryPercent / 100.0;
+  // Normalize RSSI to 0.0-1.0 scale (-100 dBm = 0, -30 dBm = 1)
+  float normalizeRssi(int rssi) {
+    return constrain((rssi + 100.0) / 70.0, 0.0, 1.0);
+  }
 
-    // Weighted combination
-    float score = (RSSI_WEIGHT * normalizedRssi) + (BATTERY_WEIGHT * normalizedBattery);
+  // Calculate path quality score for DIRECT path (this node -> WiFi -> sink)
+  // Returns effective path quality considering WiFi strength
+  float calculateDirectPathScore(int wifiRssi, float myBattery) {
+    // wifiRssi = wifiRssi - 100;
+    float wifiQuality = normalizeRssi(wifiRssi);
+    float batteryNorm = myBattery / 100.0;
     
-    // ESP-NOW bonus: prefer nodes we can reach directly via ESP-NOW
-    // This encourages real mesh routing over WiFi-only
-    if (hasEspnow) {
-      score += 0.15;  // 15% bonus for ESP-NOW reachability
+    // Direct path score: WiFi quality is the bottleneck
+    // Battery matters because we're the one doing the work
+    return (RSSI_WEIGHT * wifiQuality) + (BATTERY_WEIGHT * batteryNorm);
+  }
+
+  // Calculate path quality score for MULTI-HOP path (this node -> ESP-NOW -> relay -> WiFi -> sink)
+  // The path quality is the MINIMUM of the two links (weakest link determines throughput)
+  float calculateMultiHopPathScore(int espnowRssi, int relayWifiRssi, float relayBattery, bool relayHasSinkAccess) {
+    // If relay doesn't have sink access, this path is invalid
+    if (!relayHasSinkAccess) {
+      return -1.0;  // Invalid path
     }
     
+    float espnowQuality = normalizeRssi(espnowRssi);
+    float relayWifiQuality = normalizeRssi(relayWifiRssi);
+    float relayBatteryNorm = relayBattery / 100.0;
+    
+    // Path quality is limited by the weakest link
+    float linkQuality = min(espnowQuality, relayWifiQuality);
+    
+    // Multi-hop path score considers:
+    // 1. Weakest link quality (bottleneck)
+    // 2. Relay battery (they're doing work for us)
+    // 3. Small penalty for extra hop (latency, reliability)
+    float pathScore = (RSSI_WEIGHT * linkQuality) + (BATTERY_WEIGHT * relayBatteryNorm);
+    
+    // Multi-hop gets a small bonus when both links are strong (redundancy/reliability)
+    // If both links > 0.65 quality (~-55dBm), bonus for path diversity
+    if (espnowQuality > 0.65 && relayWifiQuality > 0.65) {
+      pathScore += MULTIHOP_STRONG_LINK_BONUS;
+    }
+    
+    // Penalty for the extra hop (latency, potential packet loss)
+    pathScore -= MULTIHOP_HOP_PENALTY;
+    
+    return pathScore;
+  }
+
+  // Legacy score function (for backwards compatibility with beacon scoring)
+  float calculateScore(int rssi, float batteryPercent, bool hasEspnow = false) {
+    float normalizedRssi = normalizeRssi(rssi);
+    float normalizedBattery = batteryPercent / 100.0;
+    float score = (RSSI_WEIGHT * normalizedRssi) + (BATTERY_WEIGHT * normalizedBattery);
+    if (hasEspnow) {
+      score += 0.15;
+    }
     return score;
   }
 
@@ -95,7 +136,7 @@ public:
       espnowAvailable[i] = false;
     }
 
-    Serial.printf("🔀 Routing initialized for node %c, default next hop: SINK\n", myNodeId);
+    LOGF("[ROUTING] Initialized for node %c, default next hop: SINK\n", myNodeId);
   }
   
   // Mark a neighbor as ESP-NOW reachable
@@ -118,16 +159,25 @@ public:
     return false;
   }
 
-  // Update neighbor information from beacon
-  void updateNeighbor(char nodeId, int rssi, float batteryPercent, bool isSink = false) {
+  // Update neighbor information from beacon/ESP-NOW
+  // hasSinkAccess = does this neighbor currently have MQTT connectivity to gateway?
+  // wifiRssi = this neighbor's WiFi RSSI to sink (their direct path quality)
+  void updateNeighbor(char nodeId, int rssi, float batteryPercent, bool hasSinkAccess = false, int wifiRssi = -100) {
     // Don't add self
     if (nodeId == myNodeId) return;
 
     // Find existing or empty slot
     int slot = -1;
+    bool isNewNeighbor = true;
+    int oldRssi = 0;
+    float oldBattery = 0;
+    
     for (int i = 0; i < MAX_NEIGHBORS; i++) {
       if (neighbors[i].valid && neighbors[i].nodeId == nodeId) {
         slot = i;
+        isNewNeighbor = false;
+        oldRssi = neighbors[i].rssi;
+        oldBattery = neighbors[i].batteryPercent;
         break;
       }
       if (slot == -1 && !neighbors[i].valid) {
@@ -147,10 +197,17 @@ public:
     }
 
     if (slot >= 0) {
+      // Check if values changed significantly before logging
+      bool significantChange = isNewNeighbor || 
+                               abs(neighbors[slot].rssi - rssi) >= 5 ||
+                               abs(neighbors[slot].batteryPercent - batteryPercent) >= 1.0 ||
+                               neighbors[slot].hasSinkAccess != hasSinkAccess;
+      
       neighbors[slot].nodeId = nodeId;
       neighbors[slot].rssi = rssi;
+      neighbors[slot].wifiRssi = wifiRssi;  // Store neighbor's WiFi quality
       neighbors[slot].batteryPercent = batteryPercent;
-      neighbors[slot].isSink = isSink;
+      neighbors[slot].hasSinkAccess = hasSinkAccess;
       neighbors[slot].lastSeen = millis();
       neighbors[slot].valid = true;
       neighborCount = 0;
@@ -159,8 +216,12 @@ public:
       }
 
       #if DEBUG_ROUTING
-      Serial.printf("  [Routing] Updated neighbor %c: RSSI=%d, Batt=%.1f%%, Sink=%s\n",
-                    nodeId, rssi, batteryPercent, isSink ? "YES" : "NO");
+      // Only log if new neighbor or significant change (RSSI ±5dB or battery ±1%)
+      if (significantChange) {
+        LOGF("[Routing] %s neighbor %c: ESP-NOW=%ddBm, WiFi=%ddBm, Batt=%.1f%%, SinkAccess=%s\n",
+                      isNewNeighbor ? "New" : "Updated",
+                      nodeId, rssi, wifiRssi, batteryPercent, hasSinkAccess ? "YES" : "NO");
+      }
       #endif
     }
   }
@@ -171,6 +232,7 @@ public:
   }
 
   // Select best next hop based on current neighbor table
+  // Uses path-quality comparison: direct WiFi vs multi-hop via relay
   RoutingDecision selectRoute(float myBatteryPercent) {
     RoutingDecision decision;
     decision.previousNextHop = nextHop;
@@ -183,37 +245,61 @@ public:
       if (neighbors[i].valid && (now - neighbors[i].lastSeen) > 60000) {
         neighbors[i].valid = false;
         #if DEBUG_ROUTING
-        Serial.printf("  [Routing] Neighbor %c expired\n", neighbors[i].nodeId);
+        LOGF("[Routing] Neighbor %c expired\n", neighbors[i].nodeId);
         #endif
       }
     }
 
-    // Always consider direct-to-sink as an option
+    // === DIRECT PATH: this node -> WiFi -> sink ===
+    float directPathScore = calculateDirectPathScore(lastSinkRssi, myBatteryPercent);
     decision.candidates[decision.candidateCount].targetId = 'S';
     decision.candidates[decision.candidateCount].rssi = lastSinkRssi;
-    decision.candidates[decision.candidateCount].batteryPercent = 100;  // Sink has "infinite" battery
-    decision.candidates[decision.candidateCount].score = calculateScore(lastSinkRssi, 100, false);
+    decision.candidates[decision.candidateCount].batteryPercent = myBatteryPercent;
+    decision.candidates[decision.candidateCount].score = directPathScore;
     decision.candidateCount++;
 
-    // Add valid neighbors as candidates
+    #if DEBUG_ROUTING
+    LOGF("[Routing] Path comparison for node %c:\n", myNodeId);
+    LOGF("  DIRECT: WiFi=%ddBm -> score=%.3f\n", lastSinkRssi, directPathScore);
+    #endif
+
+    // === MULTI-HOP PATHS: this node -> ESP-NOW -> relay -> WiFi -> sink ===
     for (int i = 0; i < MAX_NEIGHBORS; i++) {
       if (neighbors[i].valid && decision.candidateCount < MAX_NEIGHBORS + 1) {
-        // Skip neighbors with very low battery (< 15%) - they shouldn't forward
-        if (neighbors[i].batteryPercent < 15 && !neighbors[i].isSink) continue;
+        // Skip neighbors with very low battery (< 15%) unless they have good sink access
+        if (neighbors[i].batteryPercent < 15 && !neighbors[i].hasSinkAccess) continue;
 
-        // Check if this neighbor is reachable via ESP-NOW (bonus score)
-        bool hasEspnow = espnowAvailable[i];
-        float score = calculateScore(neighbors[i].rssi, neighbors[i].batteryPercent, hasEspnow);
+        // Calculate multi-hop path quality
+        float multiHopScore = calculateMultiHopPathScore(
+          neighbors[i].rssi,        // ESP-NOW link quality to relay
+          neighbors[i].wifiRssi,    // Relay's WiFi quality to sink
+          neighbors[i].batteryPercent,
+          neighbors[i].hasSinkAccess
+        );
+        
+        // Skip invalid paths (relay has no sink access)
+        if (multiHopScore < 0) {
+          #if DEBUG_ROUTING
+          LOGF("  VIA %c: No sink access - SKIPPED\n", neighbors[i].nodeId);
+          #endif
+          continue;
+        }
+        
+        #if DEBUG_ROUTING
+        LOGF("  VIA %c: ESP-NOW=%ddBm, relayWiFi=%ddBm, relayBatt=%.0f%% -> score=%.3f\n",
+                      neighbors[i].nodeId, neighbors[i].rssi, neighbors[i].wifiRssi,
+                      neighbors[i].batteryPercent, multiHopScore);
+        #endif
         
         decision.candidates[decision.candidateCount].targetId = neighbors[i].nodeId;
         decision.candidates[decision.candidateCount].rssi = neighbors[i].rssi;
         decision.candidates[decision.candidateCount].batteryPercent = neighbors[i].batteryPercent;
-        decision.candidates[decision.candidateCount].score = score;
+        decision.candidates[decision.candidateCount].score = multiHopScore;
         decision.candidateCount++;
       }
     }
 
-    // Find best candidate
+    // Find best candidate (highest score wins)
     int bestIdx = 0;
     float bestScore = decision.candidates[0].score;
     
@@ -231,11 +317,23 @@ public:
     // Determine reason for change
     if (decision.previousNextHop != decision.newNextHop) {
       if (decision.candidates[bestIdx].targetId == 'S') {
-        decision.reason = "Direct to sink has best score";
+        decision.reason = String("Direct path better (") + String(lastSinkRssi) + "dBm WiFi)";
       } else {
-        bool viaEspnow = isEspnowAvailable(decision.newNextHop);
-        decision.reason = String("Better score via ") + decision.newNextHop + 
-                          (viaEspnow ? " (ESP-NOW)" : " (MQTT)");
+        char relayId = decision.newNextHop;
+        int relayIdx = -1;
+        for (int i = 0; i < MAX_NEIGHBORS; i++) {
+          if (neighbors[i].valid && neighbors[i].nodeId == relayId) {
+            relayIdx = i;
+            break;
+          }
+        }
+        if (relayIdx >= 0) {
+          decision.reason = String("Multi-hop via ") + relayId + 
+                            " (ESP-NOW=" + neighbors[relayIdx].rssi + 
+                            "dBm, relayWiFi=" + neighbors[relayIdx].wifiRssi + "dBm)";
+        } else {
+          decision.reason = String("Multi-hop via ") + relayId;
+        }
       }
     } else {
       decision.reason = "No change - current route optimal";
@@ -246,20 +344,13 @@ public:
     if (nextHop == 'S') {
       hopCount = 1;
     } else {
-      // When routing through another node, hop count increases
-      hopCount = 2;  // Simplified - in reality would track actual path length
+      hopCount = 2;
     }
     lastRouteUpdate = now;
 
     #if DEBUG_ROUTING
-    Serial.printf("🔀 Route decision: %c -> %c (score: %.2f)\n", 
-                  myNodeId, nextHop, bestScore);
-    Serial.printf("   Reason: %s\n", decision.reason.c_str());
-    Serial.printf("   Candidates: ");
-    for (int i = 0; i < decision.candidateCount; i++) {
-      Serial.printf("%c(%.2f) ", decision.candidates[i].targetId, decision.candidates[i].score);
-    }
-    Serial.println();
+    LOGF("[Routing] SELECTED: %c -> %c (score: %.3f) | %s\n", 
+                  myNodeId, nextHop, bestScore, decision.reason.c_str());
     #endif
 
     return decision;
@@ -306,12 +397,16 @@ public:
     routeArray[(*length)++] = 'S';  // Sink
   }
 
-  // Create neighbor beacon JSON
+  // Create neighbor beacon JSON - includes WiFi RSSI for path quality comparison
   String createNeighborBeacon(float batteryPercent) {
+    int wifiRssi = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : -100;
+    bool hasSinkAccess = WiFi.status() == WL_CONNECTED;
+    
     String json = "{";
     json += "\"nodeId\":\"" + String(myNodeId) + "\",";
     json += "\"battery\":" + String(batteryPercent, 1) + ",";
-    json += "\"rssi\":" + String(WiFi.RSSI()) + ",";
+    json += "\"wifiRssi\":" + String(wifiRssi) + ",";          // Our WiFi quality for path calculation
+    json += "\"hasSinkAccess\":" + String(hasSinkAccess ? "true" : "false") + ",";
     json += "\"timestamp\":" + String(millis());
     json += "}";
     return json;

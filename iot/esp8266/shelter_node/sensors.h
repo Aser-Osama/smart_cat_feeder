@@ -48,7 +48,7 @@ public:
     pinMode(ULTRASONIC_TRIG_PIN, OUTPUT);
     pinMode(ULTRASONIC_ECHO_PIN, INPUT);
     digitalWrite(ULTRASONIC_TRIG_PIN, LOW);
-    Serial.println("  [Ultrasonic] Initialized on TRIG=D5, ECHO=D6");
+    LOGLN("  [Ultrasonic] Initialized on TRIG=D5, ECHO=D6");
   }
 
   UltrasonicReading read() {
@@ -81,7 +81,7 @@ public:
     }
 
     #if DEBUG_SENSORS
-    Serial.printf("  [Ultrasonic] Distance: %.1f cm, Cat: %s, Valid: %s\n",
+    LOGF("[Ultrasonic] Distance: %.1f cm, Cat: %s, Valid: %s\n",
                   result.distanceCm,
                   result.catPresent ? "YES" : "NO",
                   result.valid ? "YES" : "NO");
@@ -144,9 +144,9 @@ public:
 
     lastRawReading = 0;
 
-    Serial.println("  [Color] TCS3200 initialized (RED-only mode)");
-    Serial.println("          S0=D1(GPIO5), S1=D2(GPIO4), OUT=D7(GPIO13)");
-    Serial.println("          S2/S3 hardwired to GND for red filter");
+    LOGLN("  [Color] TCS3200 initialized (RED-only mode)");
+    LOGLN("          S0=D1(GPIO5), S1=D2(GPIO4), OUT=D7(GPIO13)");
+    LOGLN("          S2/S3 hardwired to GND for red filter");
   }
 
   ColorReading read() {
@@ -159,29 +159,52 @@ public:
     lastRawReading = readRedPulseCount();
     result.red = lastRawReading;
 
-    // Determine if RED food is present
-    // Lower pulse count = stronger red reflection = food present
-    result.isBrown = isRedFoodPresent(lastRawReading);
+    // Determine if food is present (bright surface = food)
+    // Note: color.isBrown now means "food detected" (keeping field name for compatibility)
+    result.isBrown = isFoodPresent(lastRawReading);
 
     #if DEBUG_SENSORS
-    Serial.printf("  [Color] Red pulses: %d, Food present: %s\n",
-                  lastRawReading,
-                  result.isBrown ? "YES" : "NO");
+    const char* status = "UNKNOWN";
+    const char* type = "";
+    if (lastRawReading <= COLOR_EMPTY_THRESHOLD) {
+      status = "EMPTY (dark)";
+    } else if (isRedFood(lastRawReading)) {
+      status = "FOOD DETECTED";
+      type = " [RED]";
+    } else {
+      status = "FOOD DETECTED";
+      type = " [WHITE/demo]";
+    }
+    LOGF("[Color] Pulses: %d = %s%s (empty<%d, red:%d-%d)\n",
+                  lastRawReading, status, type,
+                  COLOR_EMPTY_THRESHOLD, COLOR_RED_MIN_THRESHOLD, COLOR_RED_MAX_THRESHOLD);
     #endif
 
     return result;
   }
 
-  // Check if red food is detected
-  // Uses simple threshold - calibrate for your specific setup
-  bool isRedFoodPresent(int pulseCount) {
-    // Lower pulse count = more red light reflected = food present
-    return (pulseCount < COLOR_FOOD_PRESENT_THRESHOLD);
+  // Check if food is detected (any bright surface = food)
+  // NEW LOGIC: Dark = empty, Light = food
+  bool isFoodPresent(int pulseCount) {
+    // Food detected when pulse count is above the empty threshold
+    // (brighter surfaces = more reflection = food present)
+    return (pulseCount > COLOR_EMPTY_THRESHOLD);
   }
   
-  // Check if plate is definitely empty
+  // Check if detected food is in the RED range (for Flutter warning)
+  bool isRedFood(int pulseCount) {
+    return (pulseCount > COLOR_RED_MIN_THRESHOLD && 
+            pulseCount < COLOR_RED_MAX_THRESHOLD);
+  }
+  
+  // Check if detected food is WHITE/bright (demo mode, for Flutter warning)
+  bool isWhiteFood(int pulseCount) {
+    return (pulseCount >= COLOR_RED_MAX_THRESHOLD);
+  }
+  
+  // Check if plate is empty (dark surface)
   bool isPlateEmpty(int pulseCount) {
-    return (pulseCount > COLOR_PLATE_EMPTY_THRESHOLD);
+    return (pulseCount <= COLOR_EMPTY_THRESHOLD);
   }
   
   // Get raw reading for calibration
@@ -203,17 +226,17 @@ private:
 
 public:
   void begin() {
-    Serial.println("📡 Initializing sensors...");
-    Serial.println("   Using SIMPLIFIED pin configuration:");
-    Serial.println("   - Ultrasonic: TRIG=D5(GPIO14), ECHO=D6(GPIO12)");
-    Serial.println("   - Color: S0=D1(GPIO5), S1=D2(GPIO4), OUT=D7(GPIO13)");
-    Serial.println("   - Color S2/S3 HARDWIRED to GND (red filter only)");
-    Serial.println("   - Status LED: D0(GPIO16)");
-    Serial.println("   Total GPIO pins used: 6 (all safe pins!)");
+    LOGLN("[SENSOR] Initializing sensors...");
+    LOGLN("         Using SIMPLIFIED pin configuration:");
+    LOGLN("         - Ultrasonic: TRIG=D5(GPIO14), ECHO=D6(GPIO12)");
+    LOGLN("         - Color: S0=D1(GPIO5), S1=D2(GPIO4), OUT=D7(GPIO13)");
+    LOGLN("         - Color S2/S3 HARDWIRED to GND (red filter only)");
+    LOGLN("         - Status LED: D0(GPIO16)");
+    LOGLN("         Total GPIO pins used: 6 (all safe pins!)");
     ultrasonic.begin();
     color.begin();
     lastReadTime = 0;
-    Serial.println("✅ Sensors ready");
+    LOGLN("[OK] Sensors ready");
   }
 
   SensorData readAll() {

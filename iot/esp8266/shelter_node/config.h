@@ -15,6 +15,14 @@
 #define NODE_ID 'W'  // Change to 'X', 'Y', or 'Z' for other nodes
 
 // ============================================================================
+// MULTI-HOP DEMO MODE
+// ============================================================================
+// Set to 1 to force this node to NEVER send directly to MQTT sink
+// It will always route via ESP-NOW peers (for demonstrating multi-hop)
+// Only enable on nodes that have ESP-NOW peers with sink access!
+#define FORCE_MULTIHOP       0   // 0=normal routing, 1=force ESP-NOW only
+
+// ============================================================================
 // WIFI CONFIGURATION
 // ============================================================================
 const char* WIFI_SSID     = "Aser";
@@ -50,20 +58,20 @@ const int   MQTT_PORT     = 1883;
 // ============================================================================
 // 
 // ESP8266 Boot Pin Requirements (ACTIVE AT POWER-ON):
-//   GPIO0  (D3) - Must be HIGH for normal boot (LOW = flash mode) ❌ AVOID
-//   GPIO2  (D4) - Must be HIGH for normal boot, has built-in LED  ❌ AVOID
-//   GPIO15 (D8) - Must be LOW for normal boot (internal pull-down) ❌ AVOID
-//   GPIO16 (D0) - Used for deep sleep wake, no PWM/interrupts      ⚠️ LIMITED
-//   GPIO1  (TX) - Serial output, needed for debugging              ❌ AVOID
-//   GPIO3  (RX) - Serial input, boot issues                        ❌ AVOID
+//   GPIO0  (D3) - Must be HIGH for normal boot (LOW = flash mode) - AVOID
+//   GPIO2  (D4) - Must be HIGH for normal boot, has built-in LED  - AVOID
+//   GPIO15 (D8) - Must be LOW for normal boot (internal pull-down) - AVOID
+//   GPIO16 (D0) - Used for deep sleep wake, no PWM/interrupts      - LIMITED
+//   GPIO1  (TX) - Serial output, needed for debugging              - AVOID
+//   GPIO3  (RX) - Serial input, boot issues                        - AVOID
 //
-// ✅ SAFE GPIOs for general use: 4 (D2), 5 (D1), 12 (D6), 13 (D7), 14 (D5)
+// SAFE GPIOs for general use: 4 (D2), 5 (D1), 12 (D6), 13 (D7), 14 (D5)
 //
 // ============================================================================
 
 // Ultrasonic Sensor (HC-SR04) - ACTIVE HIGH trigger pulse
-#define ULTRASONIC_TRIG_PIN  14  // D5 ✅ Safe GPIO
-#define ULTRASONIC_ECHO_PIN  12  // D6 ✅ Safe GPIO
+#define ULTRASONIC_TRIG_PIN  14  // D5 - Safe GPIO
+#define ULTRASONIC_ECHO_PIN  12  // D6 - Safe GPIO
 
 // Color Sensor (TCS3200/HW-531) - SIMPLIFIED for RED detection
 // -------------------------------------------------------------------------
@@ -80,9 +88,9 @@ const int   MQTT_PORT     = 1883;
 //   VCC-> 3.3V
 //   GND-> GND
 // -------------------------------------------------------------------------
-#define COLOR_S0_PIN         5   // D1 ✅ Safe - Frequency scaling (HIGH)
-#define COLOR_S1_PIN         4   // D2 ✅ Safe - Frequency scaling (LOW for 2%)
-#define COLOR_OUT_PIN        13  // D7 ✅ Safe - Frequency output
+#define COLOR_S0_PIN         5   // D1 - Safe - Frequency scaling (HIGH)
+#define COLOR_S1_PIN         4   // D2 - Safe - Frequency scaling (LOW for 2%)
+#define COLOR_OUT_PIN        13  // D7 - Safe - Frequency output
 // S2/S3 hardwired to GND - no GPIO pins needed!
 
 // Status LED
@@ -96,15 +104,23 @@ const int   MQTT_PORT     = 1883;
 #define ULTRASONIC_MAX_DISTANCE_CM  400.0  // Max sensor range
 #define ULTRASONIC_MIN_DISTANCE_CM  2.0    // Min sensor range
 
-// Color sensor - RED food detection (simplified from brown)
+// Color sensor - Food detection (simplified RED-only mode)
 // -------------------------------------------------------------------------
-// Using RED kibble/food for simpler detection:
-// - Only need red channel (S2=LOW, S3=LOW hardwired)
-// - Higher frequency = less red light reflected = darker/empty
-// - Lower frequency = more red light reflected = red food present
+// Detection logic: DARK = EMPTY, LIGHT = FOOD
+// - Low pulse count = dark surface (absorbs light) = EMPTY plate
+// - High pulse count = light/white surface = FOOD PRESENT (demo mode)
+// - Middle pulse count = red/colored surface = FOOD PRESENT (red detected)
+//
+// This inverted logic works because:
+// - Empty metal/dark bowl absorbs light → low pulses
+// - Food (kibble, lighter colored) reflects more light → higher pulses
 // -------------------------------------------------------------------------
-#define COLOR_FOOD_PRESENT_THRESHOLD  50   // Pulse count below this = RED food present
-#define COLOR_PLATE_EMPTY_THRESHOLD   150  // Pulse count above this = empty/no red
+#define COLOR_EMPTY_THRESHOLD        200  // Below this = DARK = EMPTY
+#define COLOR_RED_MIN_THRESHOLD      200  // Red food range starts here  
+#define COLOR_RED_MAX_THRESHOLD      600  // Red food range ends here
+// Food detected when: pulseCount > EMPTY_THRESHOLD
+// Red food when: RED_MIN < pulseCount < RED_MAX
+// White/demo food when: pulseCount >= RED_MAX
 
 // ============================================================================
 // TIMING CONFIGURATION
@@ -119,9 +135,14 @@ const int   MQTT_PORT     = 1883;
 // ROUTING CONFIGURATION
 // ============================================================================
 #define MAX_HOP_COUNT              4       // Maximum hops to sink
-#define RSSI_WEIGHT                0.4     // Weight for RSSI in routing score
-#define BATTERY_WEIGHT             0.6     // Weight for battery in routing score
+#define RSSI_WEIGHT                0.5     // Weight for link quality in routing score (increased for path quality)
+#define BATTERY_WEIGHT             0.5     // Weight for battery in routing score
 #define RSSI_CHANGE_THRESHOLD      10      // dBm change to trigger route update
+
+// Path quality algorithm tuning
+#define MULTIHOP_STRONG_LINK_BONUS 0.05    // Bonus when both links > -55dBm (good dual-link)
+#define MULTIHOP_HOP_PENALTY       0.03    // Penalty for extra hop (latency, reliability)
+#define ESTIMATED_ESPNOW_RSSI      -55     // Estimated ESP-NOW link quality (dBm) when we can receive peer
 
 // ============================================================================
 // BATTERY SIMULATION
@@ -162,10 +183,41 @@ const int   MQTT_PORT     = 1883;
 // ============================================================================
 // DEBUG FLAGS
 // ============================================================================
-#define DEBUG_SENSORS              1
-#define DEBUG_ROUTING              1
-#define DEBUG_BATTERY              1
-#define DEBUG_MQTT                 1
-#define DEBUG_ESPNOW               1
+// MASTER DEBUG SWITCH - Set to 0 for production/reliability, 1 for debugging
+#define DEBUG_LOGGING              0       // 0=minimal logs (reliable), 1=verbose logs
+
+#define DEBUG_SENSORS              0
+#define DEBUG_ROUTING              0
+#define DEBUG_BATTERY              0
+#define DEBUG_MQTT                 0
+#define DEBUG_ESPNOW               0       // ESP-NOW verbose logging (expensive!)
+
+// ============================================================================
+// RELIABILITY CONFIGURATION
+// ============================================================================
+#define ESPNOW_DATA_RETRIES        2       // Retries for data messages (reduced for speed)
+#define ESPNOW_RETRY_DELAY_MS      30      // Delay between retries (reduced)
+#define ESPNOW_DATA_ACK_TIMEOUT_MS 150     // Timeout waiting for data ACK (reduced)
+#define MSG_TYPE_DATA_ACK          6       // ACK for data messages
+#define WATCHDOG_YIELD_INTERVAL    5       // yield() every N ms in tight loops
+
+// ============================================================================
+// LOGGING HELPER - Prefix all logs with node ID
+// Conditional logging to reduce blocking Serial operations
+// ============================================================================
+#if DEBUG_LOGGING
+  #define LOG_PREFIX()             Serial.printf("[Node %c] ", NODE_ID)
+  #define LOGF(fmt, ...)           do { Serial.printf("[Node %c] " fmt, NODE_ID, ##__VA_ARGS__); } while(0)
+  #define LOGLN(msg)               do { Serial.print("[Node "); Serial.print((char)NODE_ID); Serial.print("] "); Serial.println(msg); } while(0)
+#else
+  // Minimal logging - only critical messages
+  #define LOG_PREFIX()             ((void)0)
+  #define LOGF(fmt, ...)           ((void)0)
+  #define LOGLN(msg)               ((void)0)
+#endif
+
+// Always-on logging for critical errors and key events (even in production)
+#define LOG_CRITICAL(fmt, ...)     do { Serial.printf("[Node %c] " fmt, NODE_ID, ##__VA_ARGS__); } while(0)
+#define LOG_EVENT(msg)             do { Serial.print("[Node "); Serial.print((char)NODE_ID); Serial.print("] "); Serial.println(msg); } while(0)
 
 #endif // CONFIG_H

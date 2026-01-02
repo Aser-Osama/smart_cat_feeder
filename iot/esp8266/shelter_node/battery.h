@@ -43,7 +43,7 @@ public:
     drainedMah = capacityMah - remainingMah;
     lastUpdateTime = millis();
 
-    Serial.printf("🔋 Battery simulator initialized: %.1f%% (%.0f/%.0f mAh)\n",
+    LOGF("[BATTERY] Simulator initialized: %.1f%% (%.0f/%.0f mAh)\n",
                   initialPercent, remainingMah, capacityMah);
   }
 
@@ -81,7 +81,7 @@ public:
     #if DEBUG_BATTERY
     static unsigned long lastDebugPrint = 0;
     if (now - lastDebugPrint > 30000) {  // Print every 30s
-      Serial.printf("🔋 Battery: %.1f%% (%.1f mAh remaining, drain rate: %.2f mA)\n",
+      LOGF("[BATTERY] %.1f%% (%.1f mAh remaining, drain rate: %.2f mA)\n",
                     getPercent(), remainingMah, currentMa);
       lastDebugPrint = now;
     }
@@ -154,7 +154,7 @@ public:
   void replaceBattery() {
     remainingMah = capacityMah;
     drainedMah = 0;
-    Serial.println("🔋 Battery replaced - 100%");
+    LOGLN("[BATTERY] Battery replaced - 100%");
   }
 
   // Set specific percentage (for testing)
@@ -162,7 +162,7 @@ public:
     percent = constrain(percent, 0, 100);
     remainingMah = (percent / 100.0) * capacityMah;
     drainedMah = capacityMah - remainingMah;
-    Serial.printf("🔋 Battery set to %.1f%%\n", percent);
+    LOGF("[BATTERY] Battery set to %.1f%%\n", percent);
   }
 };
 
