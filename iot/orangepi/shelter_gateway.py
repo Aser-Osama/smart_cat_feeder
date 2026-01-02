@@ -188,10 +188,24 @@ class ShelterMonitoringGateway:
         """Handle sensor telemetry from a node (supports both full and compact formats)"""
         
         # Check if this is compact format (forwarded via ESP-NOW)
-        # Compact format uses short keys: n, u, d, c, r, p, b, s, h
+        # Compact format uses short keys: n, u, d, c, r, p, b, s, h, rt
         if 'n' in payload and 'nodeId' not in payload:
             # Expand compact format to full format
             plate_map = {'e': 'empty', 'f': 'filled', 'u': 'unknown'}
+            
+            # Get route from compact format, append SINK
+            route = payload.get('rt', [payload.get('n', '?')])
+            if isinstance(route, list):
+                route = route + ['SINK']
+            else:
+                route = [payload.get('n', '?'), 'SINK']
+            
+            # Determine nextHop from route
+            if len(route) > 2:
+                next_hop = '->'.join(route[1:-1])  # Show relay nodes
+            else:
+                next_hop = 'direct'
+            
             payload = {
                 'nodeId': payload.get('n', '?'),
                 'userId': payload.get('u', 'EyrwFFoBJ8TlVFepJvqdeooOBwA2'),
@@ -215,11 +229,11 @@ class ShelterMonitoringGateway:
                 'network': {
                     'rssi': payload.get('s', -100),
                     'hopCount': payload.get('h', 1),
-                    'route': [payload.get('n', '?'), 'SINK'],  # Simplified route for forwarded
-                    'nextHop': 'via-relay'
+                    'route': route,
+                    'nextHop': next_hop
                 }
             }
-            logger.info(f"📡 Expanded compact telemetry from Node {payload['nodeId']}")
+            logger.info(f"📡 Expanded compact telemetry from Node {payload['nodeId']}, route: {route}")
         
         node_id = payload.get("nodeId", "?")
         user_id = payload.get("userId", "EyrwFFoBJ8TlVFepJvqdeooOBwA2")  # Default user ID
